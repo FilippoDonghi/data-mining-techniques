@@ -1,0 +1,131 @@
+\documentclass[runningheads]{llncs}
+
+\usepackage{graphicx}
+
+\begin{document}
+
+\title{Assignment 1: Data Preparation}
+\titlerunning{Assignment 1: Data Preparation}
+\author{Name Placeholder 1 \and Name Placeholder 2 \and Name Placeholder 3}
+\authorrunning{Group X}
+\institute{Data Mining Techniques, Vrije Universiteit Amsterdam\\
+Group number: [GROUP\_NUMBER]. Student numbers: [STUDENT\_ID\_1], [STUDENT\_ID\_2], [STUDENT\_ID\_3].}
+
+\maketitle
+
+\section{Introduction}
+This report documents only the work completed so far for Assignment 1 on the ODI-2026 survey dataset. We cover Task 1A (Exploratory Data Analysis) and Task 1B (Data Cleaning and Imputation). Later tasks such as feature engineering, classification, association rules, regression, and evaluation are intentionally not included.
+
+\section{Task 1A: Exploratory Data Analysis}
+The raw dataset contains 156 responses and 16 columns. After standardizing the column names, the timestamp was parsed as a datetime value and the remaining variables were treated according to their type. The dataset mixes categorical survey answers, free text, and several numeric responses that were not always entered in a structured form.
+
+The programme field was highly heterogeneous, so spelling variants and aliases were grouped into broader categories. After grouping, the distribution is concentrated in a small number of study tracks: AI (50), Computer Science (30), Finance / Econometrics (21), Business Analytics (19), Bioinformatics (16), Other (12), and Computational Science (8).
+
+\begin{table}
+\caption{Summary of the numeric attributes after light cleaning.}
+\label{tab:numeric}
+\centering
+\begin{tabular}{|l|r|r|r|r|r|r|r|}
+\hline
+Attribute & N valid & Invalid/outliers & Mean & Std & Median & Min & Max \\
+\hline
+Stress (0-100) & 152 & 4 & 47.29 & 29.60 & 50.0 & 0.0 & 100.0 \\
+Sport hrs/week & 155 & 1 & 4.65 & 3.67 & 4.0 & 0.0 & 20.0 \\
+Students est. & 155 & 1 & 205.80 & 104.81 & 200.0 & 65.0 & 500.0 \\
+Random (1-10) & 28 & 128 & 6.11 & 2.69 & 7.0 & 1.0 & 10.0 \\
+\hline
+\end{tabular}
+\end{table}
+
+The numeric summary in Table~\ref{tab:numeric} highlights three different patterns. Stress values cover the full 0--100 scale and are fairly dispersed. Sport hours are much more concentrated, with a low median of 4 hours per week. The student-estimate question is centered around 200, which is well below the actual room size of roughly 500, so the class was systematically underestimated. The random-number question is the clearest anomaly: only 28 of 156 responses fall in the requested 1--10 interval, which shows that the column is dominated by noisy or playful entries.
+
+\begin{table}
+\caption{Unknown or ambiguous values after normalizing the categorical answers.}
+\label{tab:categorical}
+\centering
+\begin{tabular}{|l|r|}
+\hline
+Variable & Unknown values \\
+\hline
+ML course & 1 \\
+IR course & 15 \\
+Databases & 3 \\
+LLM used & 0 \\
+\hline
+\end{tabular}
+\end{table}
+
+The yes/no course questions were normalized to a common representation, while refusal phrases such as "not willing to say" were preserved as missing or unknown values. Table~\ref{tab:categorical} shows that the information loss is small for machine learning and databases, but more substantial for information retrieval.
+
+\begin{figure}
+\centering
+\includegraphics[width=\textwidth]{eda_figure1.png}
+\caption{Programme distribution, stress, sport hours, and course background after light cleaning.}
+\label{fig:eda1}
+\end{figure}
+
+Figure~\ref{fig:eda1} combines the main exploratory views. The programme distribution is imbalanced, with a few dominant categories and a long tail of smaller ones. The stress histogram spans the full scale, while sport hours remain concentrated near the lower end. The course-background bars show that most answers are well populated once the binary labels are normalized.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.82\textwidth]{eda_figure2.png}
+\caption{Stress versus sport hours, split by gender and fitted with simple linear trends.}
+\label{fig:eda2}
+\end{figure}
+
+Figure~\ref{fig:eda2} suggests a weak negative relationship between sport hours and stress. The overall Pearson correlation between the two variables is about $-0.28$, so the trend is present but modest. The gender-specific fit lines follow the same direction, but the scatter is wide enough that the relationship is not strong enough to support a more ambitious claim.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.74\textwidth]{eda_figure3.png}
+\caption{Distribution of the estimated number of students in the room.}
+\label{fig:eda3}
+\end{figure}
+
+Figure~\ref{fig:eda3} shows that the student estimates cluster around 200, with the median exactly at 200. Since the actual classroom size was roughly 500, the responses indicate a consistent underestimation rather than a broad spread around the truth.
+
+\section{Task 1B: Data Cleaning and Imputation}
+The cleaning script standardized the raw survey answers before imputation. Text fields were stripped of extra whitespace, binary answers were normalized to yes/no, the programme field was mapped to a smaller set of semantic categories, and the timestamp was parsed into a datetime column. Structured numeric fields were parsed separately for birth year, room estimate, stress, sports hours, random number, and bedtime.
+
+We then applied domain rules to remove clearly invalid values. Stress values outside 0--100 were set to missing, negative sport values were removed, bedtime values were constrained to the 0--24 range, and negative room estimates were discarded. In addition, room estimate and sports hours were passed through an IQR-based filter to remove extreme outliers. After these steps, the cleaned dataset retained the original row count but had fewer unreliable field values.
+
+The imputation stage compared two standard approaches. The first uses median imputation for numeric variables and most-frequent imputation for categorical and free-text variables. This is a conservative baseline and is robust to skewed distributions and outliers~\cite{little_rubin_2002}. The second uses KNN imputation with five neighbors and distance weighting for numeric variables, while keeping the same categorical/text fallback. KNN imputation can preserve local structure in the data better than a single global statistic~\cite{troyanskaya_2001}.
+
+\begin{table}
+\caption{Missing values before and after the two imputation strategies.}
+\label{tab:missing}
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+Variable & Before & After simple & After KNN \\
+\hline
+Birth year & 38 & 0 & 0 \\
+IR course & 15 & 0 & 0 \\
+Sports hours & 10 & 0 & 0 \\
+Statistics & 10 & 0 & 0 \\
+Room estimate & 8 & 0 & 0 \\
+Stress & 5 & 0 & 0 \\
+Databases & 3 & 0 & 0 \\
+Random number & 3 & 0 & 0 \\
+Bedtime & 3 & 0 & 0 \\
+ML course & 1 & 0 & 0 \\
+Good day 1 & 1 & 0 & 0 \\
+Good day 2 & 1 & 0 & 0 \\
+\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:missing} shows the missingness pattern before imputation. Birth year is by far the sparsest field, followed by information retrieval and sports hours. Both imputation strategies remove all missing values from the exported datasets, and the current code keeps both cleaned versions on disk for later comparison.
+
+\section{Current Status (Completed Work Only)}
+At this stage, the project has produced a cleaned, standardized dataset together with two imputed variants and the exploratory figures used in this report. The analysis and cleaning are therefore reproducible from the scripts and the exported files in \texttt{output\_task1b}.
+
+\begin{thebibliography}{8}
+\bibitem{little_rubin_2002}
+Little, R.J.A., Rubin, D.B.: Statistical Analysis with Missing Data. 2nd edn. Wiley, New York (2002)
+
+\bibitem{troyanskaya_2001}
+Troyanskaya, O., Cantor, M., Sherlock, G., Brown, P., Hastie, T., Tibshirani, R., Botstein, D., Altman, R.B.: Missing value estimation methods for DNA microarrays. Bioinformatics \textbf{17}(6), 520--525 (2001)
+\end{thebibliography}
+
+\end{document}
