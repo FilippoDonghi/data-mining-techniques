@@ -14,7 +14,7 @@ Group number: [GROUP\_NUMBER]. Student numbers: [STUDENT\_ID\_1], [STUDENT\_ID\_
 \maketitle
 
 \section{Introduction}
-This report documents only the work completed so far for Assignment 1 on the ODI-2026 survey dataset. We cover Task 1A (Exploratory Data Analysis) and Task 1B (Data Cleaning and Imputation). Later tasks such as feature engineering, classification, association rules, regression, and evaluation are intentionally not included.
+This report documents the work completed for Assignment 1 on the ODI-2026 survey dataset. We cover Task 1A (Exploratory Data Analysis), Task 1B (Data Cleaning and Imputation), and Task 2A (Application of Classification Algorithms). The classification target is the binary variable \texttt{ir\_course} and all modeling steps are described in a reproducible way.
 
 \section{Task 1A: Exploratory Data Analysis}
 The raw dataset contains 156 responses and 16 columns. After standardizing the column names, the timestamp was parsed as a datetime value and the remaining variables were treated according to their type. The dataset mixes categorical survey answers, free text, and several numeric responses that were not always entered in a structured form.
@@ -117,8 +117,63 @@ Good day 2 & 1 & 0 & 0 \\
 
 Table~\ref{tab:missing} shows the missingness pattern before imputation. Birth year is by far the sparsest field, followed by information retrieval and sports hours. Both imputation strategies remove all missing values from the exported datasets, and the current code keeps both cleaned versions on disk for later comparison.
 
+\section{Task 2A: Application of Classification Algorithms}
+For the classification task we use the cleaned basic dataset \texttt{task1b/clean\_imputed\_simple.csv} with 156 instances. The class to predict is \texttt{ir\_course}, mapped to a binary target (yes=1, no=0). The class distribution is mildly imbalanced (58 yes, 98 no), so we evaluate performance primarily with the F1-score, which balances precision and recall and is more informative than plain accuracy under imbalance~\cite{rijsbergen_1979}.
+
+\subsection*{Reproducible Pipeline}
+All experiments were run with a fixed random seed (42) in script \texttt{task2a/task\_2a.py}. We used a stratified train/test split (80\%/20\%), yielding 124 training and 32 test instances.
+
+The preprocessing and modeling pipeline was implemented with scikit-learn~\cite{pedregosa_2011}. We derived two numeric timestamp features (hour and weekday), removed free-text fields (\texttt{good\_day\_1}, \texttt{good\_day\_2}), one-hot encoded categorical attributes, and applied median/most-frequent imputation where needed. Numeric features were standardized to support distance-based learning.
+
+We compare two classification algorithms discussed in class:
+\begin{itemize}
+\item Decision Tree classifier~\cite{breiman_1984}
+\item k-Nearest Neighbors (k-NN)~\cite{cover_1967}
+\end{itemize}
+
+\subsection*{Hyperparameter Optimization}
+Hyperparameters were tuned with grid search and 5-fold stratified cross-validation on the training set, optimizing F1-score.
+
+\begin{table}
+\caption{Hyperparameter search spaces and selected configurations.}
+\label{tab:task2a_hyper}
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+Model & Search space (main parameters) & Best configuration \\
+\hline
+Decision Tree & criterion \{gini, entropy\}; max\_depth \{None, 3, 5, 7, 10\}; & criterion=entropy; max\_depth=10; \\
+ & min\_samples\_split \{2, 5, 10\}; min\_samples\_leaf \{1, 2, 4\} & min\_samples\_split=5; min\_samples\_leaf=2 \\
+\hline
+k-NN & n\_neighbors \{3, 5, 7, 9, 11\}; weights \{uniform, distance\}; p \{1, 2\} & n\_neighbors=7; weights=uniform; p=1 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection*{Results}
+Table~\ref{tab:task2a_results} reports both cross-validation performance (on training folds) and held-out test performance.
+
+\begin{table}
+\caption{Task 2A performance for tuned classifiers (target: \texttt{ir\_course}).}
+\label{tab:task2a_results}
+\centering
+\begin{tabular}{|l|r|r|r|r|r|r|}
+\hline
+Model & CV F1 & Test Acc. & Test Prec. & Test Rec. & Test F1 & Test ROC-AUC \\
+\hline
+Decision Tree & 0.553 & 0.438 & 0.200 & 0.167 & 0.182 & 0.373 \\
+k-NN & 0.485 & 0.500 & 0.333 & 0.333 & 0.333 & 0.563 \\
+\hline
+\end{tabular}
+\end{table}
+
+The decision tree achieved higher cross-validated F1 during tuning, but generalized poorly to the held-out test set, suggesting overfitting on this small and noisy dataset. The tuned k-NN model is more stable on the test split and provides the better final F1-score (0.333 vs.
+0.182), so we select k-NN as the preferred classifier for this target under the current feature set.
+
+From an interpretation perspective, both models indicate that predicting \texttt{ir\_course} from the available survey variables is non-trivial. The low absolute scores suggest that additional feature engineering (Task 1C extensions), stronger class-balancing strategies, or alternative model families may be needed to improve performance substantially.
+
 \section{Current Status (Completed Work Only)}
-At this stage, the project has produced a cleaned, standardized dataset together with two imputed variants and the exploratory figures used in this report. The analysis and cleaning are therefore reproducible from the scripts and the exported files in \texttt{output\_task1b}.
+At this stage, the project has produced exploratory analysis outputs, cleaned and imputed datasets, and a complete reproducible classification pipeline for Task 2A with hyperparameter optimization and held-out evaluation. The analysis is reproducible from the scripts in \texttt{task1a}, \texttt{task1b}, and \texttt{task2a}.
 
 \begin{thebibliography}{8}
 \bibitem{little_rubin_2002}
@@ -126,6 +181,18 @@ Little, R.J.A., Rubin, D.B.: Statistical Analysis with Missing Data. 2nd edn. Wi
 
 \bibitem{troyanskaya_2001}
 Troyanskaya, O., Cantor, M., Sherlock, G., Brown, P., Hastie, T., Tibshirani, R., Botstein, D., Altman, R.B.: Missing value estimation methods for DNA microarrays. Bioinformatics \textbf{17}(6), 520--525 (2001)
+
+\bibitem{pedregosa_2011}
+Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., Duchesnay, E.: Scikit-learn: Machine learning in Python. Journal of Machine Learning Research \textbf{12}, 2825--2830 (2011)
+
+\bibitem{breiman_1984}
+Breiman, L., Friedman, J.H., Olshen, R.A., Stone, C.J.: Classification and Regression Trees. Wadsworth, Belmont (1984)
+
+\bibitem{cover_1967}
+Cover, T., Hart, P.: Nearest neighbor pattern classification. IEEE Transactions on Information Theory \textbf{13}(1), 21--27 (1967)
+
+\bibitem{rijsbergen_1979}
+van Rijsbergen, C.J.: Information Retrieval. 2nd edn. Butterworth-Heinemann, London (1979)
 \end{thebibliography}
 
 \end{document}
