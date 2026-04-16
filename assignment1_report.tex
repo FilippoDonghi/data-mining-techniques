@@ -172,6 +172,28 @@ The decision tree achieved higher cross-validated F1 during tuning, but generali
 
 From an interpretation perspective, both models indicate that predicting \texttt{ir\_course} from the available survey variables is non-trivial. The low absolute scores suggest that additional feature engineering (Task 1C extensions), stronger class-balancing strategies, or alternative model families may be needed to improve performance substantially.
 
+\section{Task 2B: Winning Classification Algorithms}
+To study a high-performing real-world classification approach, we analyzed the winner of the ImageNet Large Scale Visual Recognition Challenge (ILSVRC) 2015 classification track~\cite{russakovsky_2015}. Although Kaggle and KDD Cup are common platforms, ILSVRC is also a landmark machine learning competition and a strong example of how winning approaches differ from standard baselines.
+
+\subsection*{Competition Description}
+ILSVRC 2015 is a large-scale image classification competition with 1{,}000 classes and more than one million training images from the ImageNet dataset~\cite{russakovsky_2015}. The core task is multi-class classification: assign each image to the correct object class. The primary evaluation measure is top-5 classification error, i.e., an image is counted as correctly classified if the true class appears in the model's five highest-confidence predictions.
+
+\subsection*{Winner and Technique}
+The winner of ILSVRC 2015 classification was the Microsoft Research team, using the Residual Network (ResNet) architecture~\cite{he_2016}. Their model family (up to 152 layers) achieved state-of-the-art accuracy at the time and significantly improved over earlier deep convolutional networks.
+
+\subsection*{Main Idea of the Winning Approach}
+The key idea is residual learning. Instead of learning a direct mapping $H(x)$, each residual block learns a residual function $F(x)=H(x)-x$ and outputs $F(x)+x$ through shortcut (skip) connections. This design improves gradient flow during training and makes very deep networks trainable without severe degradation problems. In practice, this allowed much deeper models than standard plain CNN stacks while maintaining optimization stability~\cite{he_2016}.
+
+\subsection*{Why It Stood Out}
+Compared with non-winning or standard architectures of that period, the winning approach stood out for three reasons:
+\begin{itemize}
+\item It enabled substantially deeper networks with better optimization behavior due to skip connections.
+\item It improved generalization and reduced classification error at large scale.
+\item It provided an architectural principle (residual blocks) that transferred well to many later tasks and became a default baseline in computer vision.
+\end{itemize}
+
+In short, the winning method was not only a parameter tuning improvement over standard CNNs; it introduced an architectural innovation that changed how classification models are designed and trained.
+
 \section{Current Status (Completed Work Only)}
 At this stage, the project has produced exploratory analysis outputs, cleaned and imputed datasets, and a complete reproducible classification pipeline for Task 2A with hyperparameter optimization and held-out evaluation. The analysis is reproducible from the scripts in \texttt{task1a}, \texttt{task1b}, and \texttt{task2a}.
 
@@ -193,6 +215,12 @@ Cover, T., Hart, P.: Nearest neighbor pattern classification. IEEE Transactions 
 
 \bibitem{rijsbergen_1979}
 van Rijsbergen, C.J.: Information Retrieval. 2nd edn. Butterworth-Heinemann, London (1979)
+
+\bibitem{russakovsky_2015}
+Russakovsky, O., Deng, J., Su, H., Krause, J., Satheesh, S., Ma, S., Huang, Z., Karpathy, A., Khosla, A., Bernstein, M., Berg, A.C., Fei-Fei, L.: ImageNet Large Scale Visual Recognition Challenge. International Journal of Computer Vision \textbf{115}(3), 211--252 (2015)
+
+\bibitem{he_2016}
+He, K., Zhang, X., Ren, S., Sun, J.: Deep Residual Learning for Image Recognition. In: Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pp. 770--778 (2016)
 \end{thebibliography}
 
 \end{document}
