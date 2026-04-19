@@ -1,20 +1,21 @@
 \documentclass[runningheads]{llncs}
 
 \usepackage{graphicx}
+\usepackage{amsmath}
 
 \begin{document}
 
 \title{Assignment 1: Data Preparation}
 \titlerunning{Assignment 1: Data Preparation}
-\author{Name Placeholder 1 \and Name Placeholder 2 \and Name Placeholder 3}
-\authorrunning{Group X}
+\author{Nicholas Boidi \and Pablos Tselioudis Garmendia \and Filippo Donghi}
+\authorrunning{Group 65}
 \institute{Data Mining Techniques, Vrije Universiteit Amsterdam\\
-Group number: [GROUP\_NUMBER]. Student numbers: [STUDENT\_ID\_1], [STUDENT\_ID\_2], [STUDENT\_ID\_3].}
+Group number: 65. Student numbers: 2892127, 2891511, 2888236.}
 
 \maketitle
 
 \section{Introduction}
-This report documents the work completed for Assignment 1 on the ODI-2026 survey dataset. We cover Task 1A (Exploratory Data Analysis), Task 1B (Data Cleaning and Imputation), and Task 2A (Application of Classification Algorithms). The classification target is the binary variable \texttt{ir\_course} and all modeling steps are described in a reproducible way.
+This report documents the work completed for Assignment 1 on the ODI-2026 survey dataset. We cover all five tasks: Task~1A (Exploratory Data Analysis), Task~1B (Data Cleaning and Imputation), Task~1C (Feature Engineering), Task~2A (Application of Classification Algorithms), Task~2B (Winning Classification Algorithms), Task~3 (Association Rules), Task~4 (Numerical Prediction), and Task~5 (Evaluation). The classification target is the binary variable \texttt{ir\_course} and all modeling steps are described in a reproducible way.
 
 \section{Task 1A: Exploratory Data Analysis}
 The raw dataset contains 156 responses and 16 columns. After standardizing the column names, the timestamp was parsed as a datetime value and the remaining variables were treated according to their type. The dataset mixes categorical survey answers, free text, and several numeric responses that were not always entered in a structured form.
@@ -117,6 +118,14 @@ Good day 2 & 1 & 0 & 0 \\
 
 Table~\ref{tab:missing} shows the missingness pattern before imputation. Birth year is by far the sparsest field, followed by information retrieval and sports hours. Both imputation strategies remove all missing values from the exported datasets, and the current code keeps both cleaned versions on disk for later comparison.
 
+\section{Task 1C: Feature Engineering}
+
+Feature engineering was applied to the cleaned dataset (\texttt{clean\_imputed\_simple.csv}) with the goal of enriching the input variables available for classification. We chose structured and interpretable features because the dataset is relatively small and consists mainly of survey variables. The aim was to create compact and meaningful predictors without introducing unnecessary complexity.
+
+We introduced four new features. First, \texttt{age} was derived from \texttt{birth\_year} using the formula $2026 - \texttt{birth\_year}$, obtaining a more interpretable demographic variable than the raw birth year. Second, \texttt{courses\_count} was defined as the number of technical courses taken by each student, counting \texttt{ml\_course}, \texttt{stats\_course}, and \texttt{db\_course}, in order to summarize academic background in a single variable. Note that \texttt{ir\_course} was deliberately excluded from this count because it was selected as the classification target; including it would have introduced target leakage. Third, \texttt{late\_bed} was constructed as a binary indicator of whether a student reported going to bed after 1:30~AM, simplifying the raw bedtime variable into a clearer behavioral pattern. Finally, \texttt{sport\_stress\_ratio} was defined as $\texttt{sports\_hours} / (\texttt{stress} + 1)$, combining physical activity and perceived stress into a single behavioral feature. The $+1$ in the denominator prevents division by zero when stress is reported as zero.
+
+Together, these four features combine demographic, academic, and behavioral information into compact representations that may help the model distinguish students who took the IR course from those who did not.
+
 \section{Task 2A: Application of Classification Algorithms}
 For the classification task we use the cleaned basic dataset \texttt{task1b/clean\_imputed\_simple.csv} with 156 instances. The class to predict is \texttt{ir\_course}, mapped to a binary target (yes=1, no=0). The class distribution is mildly imbalanced (58 yes, 98 no), so we evaluate performance primarily with the F1-score, which balances precision and recall and is more informative than plain accuracy under imbalance~\cite{rijsbergen_1979}.
 
@@ -194,10 +203,191 @@ Compared with non-winning or standard architectures of that period, the winning 
 
 In short, the winning method was not only a parameter tuning improvement over standard CNNs; it introduced an architectural innovation that changed how classification models are designed and trained.
 
-\section{Current Status (Completed Work Only)}
-At this stage, the project has produced exploratory analysis outputs, cleaned and imputed datasets, and a complete reproducible classification pipeline for Task 2A with hyperparameter optimization and held-out evaluation. The analysis is reproducible from the scripts in \texttt{task1a}, \texttt{task1b}, and \texttt{task2a}.
 
-\begin{thebibliography}{8}
+\section{Task 3: Association Rules}
+
+Association rule mining, pioneered by the APRIORI algorithm~\cite{agrawal_1994}, discovers frequent itemsets and generates rules like ``customers who buy bread and butter also buy milk.'' However, the raw association rules lack business hierarchy and context. One important category of improvements involves product hierarchies, also known as generalization or taxonomy-based association rules, which group products into higher-level categories~\cite{srikant_1997}.
+
+\subsection*{Hierarchical Product Categorization}
+
+Instead of finding rules at the individual product level, hierarchical approaches aggregate products into multiple levels of abstraction. For example, in a grocery store, ``cheese'' and ``yogurt'' are both in the ``dairy products'' category, which sits under ``food.'' A rule mined at the product level might be ``customers who buy Feta cheese also buy Greek yogurt'' (highly specific, rare), while at the category level it becomes ``customers who buy dairy products also buy bread'' (broader, more frequent).
+
+The process works as follows: First, define a product hierarchy (e.g., product → category → department → section). Second, apply APRIORI or similar mining algorithms not just at the product level, but also at each level of the hierarchy. Third, report rules at all levels, allowing stakeholders to choose the appropriate granularity for their decision-making~\cite{srikant_1997}.
+
+\subsection*{Advantages}
+
+\begin{itemize}
+\item \textbf{Fewer rare itemsets:} General categories appear more frequently than specific products, raising support thresholds and filtering out noise~\cite{srikant_1997}.
+\item \textbf{More actionable insights:} Rules at category level guide merchandising without product-specific decisions.
+\item \textbf{Multiple levels of analysis:} Stakeholders can drill down from high-level to low-level rules as needed.
+\item \textbf{Scalability improvements:} Mining fewer, more frequent itemsets is computationally cheaper~\cite{srikant_1997}.
+\item \textbf{Domain knowledge integration:} The hierarchy encodes expert knowledge about product relationships.
+\end{itemize}
+
+\subsection*{Disadvantages}
+
+\begin{itemize}
+\item \textbf{Information loss:} Grouping products erases fine-grained signals and niche market patterns.
+\item \textbf{Hierarchy design is critical:} Poor hierarchies introduce noise and miss natural patterns~\cite{srikant_1997}.
+\item \textbf{Increased complexity:} Running APRIORI at multiple levels is more complex than single-level mining.
+\item \textbf{Static hierarchy assumption:} Most approaches assume hierarchies are fixed and known in advance.
+\item \textbf{Cross-level conflicts:} Product-level and category-level rules may contradict each other~\cite{srikant_1997}.
+\end{itemize}
+
+Hierarchical association rules are most effective for large product spaces where experts have defined meaningful hierarchies and business decisions naturally operate at category levels.
+
+
+\section{Task 4: Numerical Prediction}
+The goal of this task is to predict a continuous numerical target using two regression algorithms. The target variable chosen is \texttt{stress}, which represents self-reported stress levels on a scale from 0 to 100. This variable was selected because it has the widest range and highest variance among all numeric columns in the dataset. It also shows the strongest correlations with other features, particularly sports hours ($r = -0.26$) and bedtime ($r = -0.23$). The other numeric candidates like \texttt{birth\_year} or \texttt{room\_estimate} have almost no correlation with any feature, making them poor regression targets.
+
+\subsection*{Setup}
+
+The cleaned dataset from Task 1B (\texttt{clean\_imputed\_simple.csv}) was used with 156 instances. Free-text columns (\texttt{good\_day\_1}, \texttt{good\_day\_2}) and the \texttt{random\_number} column were dropped. The random number column was removed because it contained extreme outlier values (up to $1.1 \times 10^{37}$) and carries no predictive signal for stress.
+
+Categorical variables were preprocessed before modeling. The \texttt{programme} field was grouped to merge rare categories (fewer than 4 instances) into an "Other" label. Binary yes/no columns were encoded as 0/1, and the \texttt{stats\_course} column (which uses "mu" and "sigma" labels) was converted to a binary indicator. The timestamp was split into hour and weekday features. All numeric features were standardized, and the remaining categorical features were one-hot encoded.
+
+The data was split into 80\% training (124 instances) and 20\% test (32 instances) using a fixed random seed of 42 for reproducibility.
+
+\subsection*{Regression Approaches}
+
+Two regression algorithms were compared:
+
+\begin{itemize}
+    \item \textbf{Ridge Regression}~\cite{hoerl_1970}: a linear model with L2 regularization. It penalizes large coefficients, which helps prevent overfitting on small datasets with many features after one-hot encoding.
+    \item \textbf{Random Forest Regressor}~\cite{breiman_2001}: an ensemble of decision trees that captures non-linear relationships. Each tree is trained on a bootstrap sample, and the final prediction is the average across all trees.
+\end{itemize}
+
+Ridge was chosen as the linear baseline because standard linear regression tends to overfit when the number of features (after encoding) approaches the number of samples. Random Forest was chosen as the non-linear alternative because it handles mixed feature types well and does not assume a linear relationship between predictors and the target.
+
+\subsection*{Hyperparameter Optimization}
+
+Hyperparameters were tuned using grid search with 5-fold cross-validation on the training set, optimizing for negative mean squared error.
+
+\begin{table}[h]
+\caption{Hyperparameter search spaces and best configurations.}
+\label{tab:task4_hyper}
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+Model & Search space & Best configuration \\
+\hline
+Ridge & alpha \{0.01, 0.1, 1.0, 10.0, 100.0\} & alpha = 100.0 \\
+\hline
+Random Forest & n\_estimators \{50, 100, 200\} & n\_estimators = 200 \\
+ & max\_depth \{None, 5, 10, 15\} & max\_depth = 5 \\
+ & min\_samples\_split \{2, 5, 10\} & min\_samples\_split = 10 \\
+ & min\_samples\_leaf \{1, 2, 4\} & min\_samples\_leaf = 1 \\
+\hline
+\end{tabular}
+\end{table}
+
+The high alpha value selected for Ridge (100.0) indicates that strong regularization is needed. This makes sense given the small dataset and the relatively large number of features after one-hot encoding. For Random Forest, the shallow depth (5) and high split threshold (10) suggest the model also benefits from being constrained to avoid overfitting.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\caption{Task 4 regression performance for tuned models (target: \texttt{stress}).}
+\label{tab:task4_results}
+\centering
+\begin{tabular}{|l|r|r|r|r|r|}
+\hline
+Model & CV RMSE & Test MSE & Test RMSE & Test MAE & Test $R^2$ \\
+\hline
+Ridge & 28.25 & 691.32 & 26.29 & 22.52 & 0.116 \\
+Random Forest & 28.24 & 825.01 & 28.72 & 25.18 & $-$0.055 \\
+\hline
+\end{tabular}
+\end{table}
+
+Ridge outperforms Random Forest on the test set across all metrics. The test $R^2$ of 0.116 for Ridge is low but positive, meaning it explains about 12\% of the variance in stress levels. Random Forest achieves a negative $R^2$, which means it performs worse than simply predicting the mean stress value for every instance.
+
+Both models had nearly identical cross-validation RMSE (around 28.2), but their test set behavior diverged. This gap is likely caused by the small test set size (32 samples), where a few difficult instances can shift the metrics noticeably.
+
+\subsection*{Interpretation}
+
+Figure~\ref{fig:task4_scatter} shows the actual versus predicted stress values for both models. Ridge predictions spread along a slight upward trend, indicating some ability to distinguish low-stress from high-stress students. Random Forest predictions cluster more tightly in the 30 to 60 range regardless of the actual value. This is a common pattern when a model defaults to predicting near the training set mean.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{task4_actual_vs_predicted.png}
+\caption{Actual vs predicted stress levels for Ridge and Random Forest.}
+\label{fig:task4_scatter}
+\end{figure}
+
+Figure~\ref{fig:task4_residuals} shows the distribution of residuals (actual minus predicted) for both models. Ridge residuals are spread roughly evenly around zero, while Random Forest residuals skew negative. The negative skew means the Random Forest tends to overpredict stress more often than it underpredicts it.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{task4_residuals.png}
+\caption{Residual distributions for Ridge and Random Forest.}
+\label{fig:task4_residuals}
+\end{figure}
+
+Comparing the two models directly, Ridge wins on every test metric. Its MAE is about 2.7 points lower than Random Forest, and its $R^2$ is positive while Random Forest's is negative. The high regularization strength selected for Ridge (alpha = 100.0) effectively shrinks most coefficients toward zero, keeping only the features with the strongest signal. Random Forest, despite being more flexible, does not benefit from that flexibility here. With only 124 training samples, it lacks enough data to reliably learn non-linear splits across 5 levels of depth. The result is a model that memorizes training noise and then regresses toward the mean on unseen data.
+
+The overall low performance of both models is expected. Stress is inherently subjective. Predicting it from a handful of survey demographics like programme, courses taken, and sport hours is a hard problem. The features available simply do not capture enough of what drives individual stress levels. That said, Ridge still manages to pick up some weak linear signal, particularly from sports hours and bedtime, which is consistent with the correlations observed during exploratory analysis. Based on these results, Ridge is selected as the better model for this regression task.
+
+Compared to the classification task in Task 2A, the regression problem proved harder. Classification only needed to separate two groups (took IR course or not), while regression requires predicting exact values on a continuous scale. A small dataset amplifies this difficulty because the model has fewer examples to learn subtle numeric patterns from. Both tasks share the same underlying limitation though: the survey features collected during the first lecture are simply not strong predictors of either course enrollment or stress.
+
+
+
+
+\section{Task 5: Evaluation}
+
+\subsection*{Task 5A: Characteristics of Evaluation Metrics}
+
+Mean Squared Error (MSE) and Mean Absolute Error (MAE) are two standard metrics for evaluating regression models. Their formulae are:
+
+\[
+\text{MSE} = \frac{1}{n} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2
+\qquad \text{MAE} = \frac{1}{n} \sum_{i=1}^{n} |y_i - \hat{y}_i|
+\]
+
+where $y_i$ is the actual value, $\hat{y}_i$ is the predicted value, and $n$ is the number of samples.
+
+The key difference between them comes down to how they treat large errors. MSE squares each error before averaging, which means a single prediction that is off by 40 points gets penalized 16 times more than one that is off by 10. MAE treats both proportionally, so the same pair of errors contributes only 4 times more. In practice, this means MSE is more sensitive to outliers. If the goal is to minimize worst-case errors or if large mistakes are especially costly, MSE is the better choice. If all errors matter equally regardless of size, MAE gives a more representative picture of typical model performance.
+
+There is also an optimization angle. MSE is differentiable everywhere, which makes it easier to use with gradient-based training methods. MAE has a non-differentiable point at zero, which can cause issues during optimization. This is one reason why MSE is more commonly used as a training objective even when MAE might be the preferred evaluation metric.
+
+MSE and MAE produce identical results when every prediction error has exactly the same magnitude. Consider a simple example: a model predicts housing prices for 4 houses, and every prediction is off by exactly 10{,}000 euros. In that case, $\text{MAE} = 10{,}000$ and $\text{MSE} = 100{,}000{,}000$. The values differ, but both metrics agree perfectly on which model is better because neither is affected by variance in the error distribution. There is no variance. If a second model also makes uniform errors but of size 12{,}000, both MSE and MAE will rank the first model higher.
+
+More formally, MSE can be decomposed as $\text{MSE} = \text{MAE}^2 + \text{Var}(\text{errors})$ when errors are all the same sign. When the variance of the error distribution is zero (all errors equal), the two metrics carry the same information and will always rank models identically. They start to disagree when one model has high error variance, meaning a mix of small and large mistakes, because MSE penalizes the large ones disproportionately while MAE does not.
+
+\subsection*{Task 5B: Impact of Evaluation Metrics}
+
+Table~\ref{tab:task5_metrics} shows the MSE and MAE values for both regression models from Task 4.
+
+\begin{table}[h]
+\caption{MSE and MAE comparison for Ridge and Random Forest on stress prediction.}
+\label{tab:task5_metrics}
+\centering
+\begin{tabular}{|l|r|r|r|r|r|}
+\hline
+Model & MSE & RMSE & MAE & Median AE & Max AE \\
+\hline
+Ridge & 691.32 & 26.29 & 22.52 & 20.45 & 45.82 \\
+Random Forest & 825.01 & 28.72 & 25.18 & 23.45 & 56.97 \\
+\hline
+\end{tabular}
+\end{table}
+
+Ridge outperforms Random Forest under both metrics, but the gap is not the same. The MSE difference between the two models is 133.69 (a 19.3\% increase from Ridge to Random Forest), while the MAE difference is only 2.66 (an 11.8\% increase). MSE amplifies the gap because Random Forest makes a few large errors that get squared. Its worst prediction is off by nearly 57 points, compared to Ridge's worst at about 46 points. That single outlier error contributes disproportionately to MSE.
+
+Figure~\ref{fig:task5_breakdown} shows the per-sample absolute errors sorted from largest to smallest for both models. The darker bars represent absolute errors (what MAE averages), while the lighter overlay shows the squared errors scaled to the same axis. For both models, the top 5 largest errors account for roughly 40 to 43\% of the total MSE but only about 29\% of the total MAE. This demonstrates exactly how MSE amplifies the influence of outlier predictions.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{task5_error_breakdown.png}
+\caption{Per-sample errors sorted by magnitude, showing how large errors contribute disproportionately to MSE compared to MAE.}
+\label{fig:task5_breakdown}
+\end{figure}
+
+For this particular problem, MAE is arguably the more useful metric. Stress is self-reported on a subjective scale, so the data itself contains noise. A prediction that is off by 40 points is not necessarily four times worse than one that is off by 20, it could just reflect inconsistent self-reporting. MAE treats these errors more evenly and gives a more intuitive summary: on average, the model's predictions are about 22 to 25 points away from the actual stress value. That is easy to interpret on a 0 to 100 scale.
+
+That said, MSE still adds value as a complementary metric. The fact that Ridge has a noticeably lower MSE tells us it avoids the extreme mispredictions that Random Forest occasionally makes. If the application required reliable worst-case behavior, MSE would flag Random Forest's weakness more clearly than MAE does.
+
+
+\begin{thebibliography}{16}
 \bibitem{little_rubin_2002}
 Little, R.J.A., Rubin, D.B.: Statistical Analysis with Missing Data. 2nd edn. Wiley, New York (2002)
 
@@ -221,6 +411,19 @@ Russakovsky, O., Deng, J., Su, H., Krause, J., Satheesh, S., Ma, S., Huang, Z., 
 
 \bibitem{he_2016}
 He, K., Zhang, X., Ren, S., Sun, J.: Deep Residual Learning for Image Recognition. In: Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pp. 770--778 (2016)
+
+
+\bibitem{agrawal_1994}
+Agrawal, R., Imieliński, T., Swami, A.: Mining association rules between sets of items in large databases. In: Proceedings of the 1993 ACM SIGMOD International Conference on Management of Data, pp. 207--216 (1993)
+
+\bibitem{srikant_1997}
+Srikant, R., Agrawal, R.: Mining generalized association rules. In: Proceedings of the 23rd International Conference on Very Large Data Bases (VLDB), pp. 407--419 (1997)
+
+\bibitem{hoerl_1970}
+Hoerl, A.E., Kennard, R.W.: Ridge regression: Biased estimation for nonorthogonal problems. Technometrics \textbf{12}(1), 55--67 (1970)
+
+\bibitem{breiman_2001}
+Breiman, L.: Random forests. Machine Learning \textbf{45}(1), 5--32 (2001)
 \end{thebibliography}
 
 \end{document}
