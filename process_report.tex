@@ -1,0 +1,60 @@
+\documentclass[runningheads]{llncs}
+
+\usepackage{booktabs}
+
+\begin{document}
+
+\title{Assignment 2 Process Report}
+
+\author{Nicholas Boidi\inst{1} \and Pablos Tselioudis Garmendia\inst{1} \and Filippo Donghi\inst{1}}
+
+\authorrunning{Boidi et al.}
+
+\institute{Vrije Universiteit Amsterdam, Amsterdam, Netherlands \\
+Group Number: 65 \\
+Student Numbers: 2892127, 2891511, 2888236}
+
+\maketitle
+
+\section{Schedule}
+We worked iteratively rather than in a strict waterfall. The first step was to read the assignment specification carefully and inspect the dataset structure. After that, we moved through exploration, feature engineering, modeling, evaluation, and report writing in several short cycles.
+
+\begin{table}[t]
+\centering
+\caption{Work schedule for Assignment 2.}
+\begin{tabular}{p{2.5cm}p{10cm}}
+\toprule
+Date & Activity \\
+\midrule
+23 April 2026 & Read the assignment PDF, inspected the CSV schema, and confirmed the submission format. \\
+23 April 2026 & Performed exploratory data analysis, checked missing values, target imbalance, and price behavior. \\
+23 April 2026 & Built the first feature engineering pipeline and trained the popularity baseline and gradient boosting model. \\
+23 April 2026 & Evaluated NDCG@5 on a search-level validation split, then added fairness auditing and mitigation. \\
+23 April 2026 & Wrote the report in LNCS format, generated figures, and validated the LaTeX build. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Task Allocation}
+The work was divided by responsibility, but all three members contributed to the final result and reviewed each other's output.
+
+\begin{table}[t]
+\centering
+\caption{Main contributions of the group members.}
+\begin{tabular}{p{3.2cm}p{9.3cm}}
+\toprule
+Member & Contribution \\
+\midrule
+Nicholas Boidi & Implemented the data pipeline, feature engineering, model training code, validation split, fairness analysis, and Kaggle submission generation. \\
+Pablos Tselioudis Garmendia & Led the report structure, related work section, interpretation of results, and the discussion of scalable deployment. \\
+Filippo Donghi & Helped with exploratory analysis, reviewed plots and metrics, and contributed to the final editing and presentation of the report. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reflection}
+Overall, the cooperation was effective because we separated the assignment into clear stages and kept the intermediate results reproducible. A major challenge was the dataset size, which required us to iterate on a manageable subset before producing the final run. Another challenge was aligning model quality with the fairness requirement from the assignment. That forced us to think beyond pure accuracy and to check whether the model behaved differently across user groups.
+
+The most useful part of the collaboration was that each stage created input for the next one: the EDA informed the features, the validation results informed the fairness audit, and the report was written directly from the metrics produced by the pipeline. This reduced guesswork and made the final report easier to justify. If we had more time, we would further compare more ranking-oriented models and expand the fairness analysis to additional user segments.
+
+\end{document}

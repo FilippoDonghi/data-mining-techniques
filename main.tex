@@ -4,6 +4,9 @@
 \documentclass[runningheads]{llncs}
 
 \usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{url}
 % Used for displaying figures in EPS format
 
 % If you use the hyperref package, please uncomment the following line
@@ -24,31 +27,216 @@ Student Numbers: 2892127, 2891511, 2888236}
 
 \maketitle
 
-\begin{abstract}
-Add your abstract here (150--250 words).
-
-\keywords{Add your keywords here}
-\end{abstract}
+\keywords{Recommender Systems \and Learning to Rank \and Expedia \and NDCG \and Fairness}
 
 \section{Introduction}
 \label{sec:intro}
 
-Add your introduction content here.
+This report describes our solution for Assignment 2 of Data Mining Techniques. The task is to rank hotel properties per search query (\texttt{srch\_id}) so that booked hotels appear at the top, followed by clicked hotels, measured with NDCG@5 on the Kaggle competition server.
 
-\section{Methodology}
-\label{sec:methodology}
+The data contains approximately five million rows for training and five million for testing. Each row is one displayed property for one search query, with rich contextual, property, and competitor information. We followed a CRISP-DM style workflow: (i) related work and business framing, (ii) exploratory analysis, (iii) feature engineering and split strategy, (iv) modeling and evaluation with at least two methods, and (v) deployment considerations including ethical AI bias analysis and mitigation.
 
-Add your methodology section here.
+Our best local model is a gradient boosting rank surrogate with fairness reweighting in training. It improves strongly over a recommender-style popularity baseline while reducing performance disparity between family and non-family queries.
 
-\section{Results}
-\label{sec:results}
+\section{Related Work and Business Understanding}
+\label{sec:related}
 
-Add your results section here.
+The business objective is to improve ranking quality in hotel search, because better ranking increases user satisfaction and conversion (clicks/bookings). This is a recommender systems problem with context-aware ranking constraints.
+
+Prior recommender literature highlights three relevant ideas. First, collaborative and latent-factor methods are effective at capturing user-item preference patterns \cite{koren2009matrix}. Second, pairwise and listwise ranking methods (e.g., LambdaMART) are highly suitable when the evaluation target is NDCG \cite{burges2010ranknet}. Third, implicit-feedback recommenders (click/view/book interactions) require careful weighting of signal strength \cite{rendle2009bpr}.
+
+In practice, public discussions around the Expedia challenge emphasize similar points: strong hotel priors (historical property attractiveness), destination-context interactions, and tree-based ranking models typically outperform naive global sorting. This motivated our two-model setup:
+\begin{itemize}
+\item A recommender-style popularity model with Bayesian smoothing (strong interpretable baseline).
+\item A feature-rich gradient boosting model as our final method.
+\end{itemize}
+
+\section{Data Understanding}
+\label{sec:data}
+
+\subsection{Dataset Profile}
+We used the provided competition data only. In our reproducible training run, we loaded 1{,}200{,}000 training rows to iterate efficiently while preserving search-level structure. The resulting split statistics are shown in Table~\ref{tab:splitstats}.
+
+\begin{table}[t]
+\centering
+\caption{Training/validation statistics from our reproducible run.}
+\label{tab:splitstats}
+\begin{tabular}{lr}
+\toprule
+Statistic & Value \\
+\midrule
+Training rows & 958{,}628 \\
+Validation rows & 241{,}372 \\
+Training queries (\texttt{srch\_id}) & 38{,}595 \\
+Validation queries (\texttt{srch\_id}) & 9{,}649 \\
+Booking rate & 2.78\% \\
+Click rate & 4.47\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The low booking rate confirms heavy class imbalance. Since NDCG@5 is query-wise and top-heavy, calibration near the top ranks is much more important than global classification accuracy.
+
+\subsection{Exploratory Findings}
+We performed EDA on missingness, target sparsity, and key relationships:
+\begin{itemize}
+\item Competitor fields (\texttt{comp\*}) and historical visitor fields have substantial missingness.
+\item Price has a non-linear relationship with relevance; very low and very high prices both can underperform depending on context.
+\item Relative features inside a search list (e.g., price rank within \texttt{srch\_id}) are more informative than absolute values alone.
+\end{itemize}
+
+Figure~\ref{fig:missing} and Figure~\ref{fig:price_rel} summarize these observations.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{outputs/missingness_top15.png}
+\caption{Top-15 features by percentage of missing values.}
+\label{fig:missing}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.8\textwidth]{outputs/price_vs_relevance.png}
+\caption{Price vs. relevance on log-scale (sampled for visibility).}
+\label{fig:price_rel}
+\end{figure}
+
+\section{Data Preparation}
+\label{sec:prep}
+
+\subsection{Target Construction}
+Following the competition definition, we used graded relevance:
+\[
+\text{relevance} = 5 \cdot \texttt{booking\_bool} + 1 \cdot (\texttt{click\_bool} \land \neg \texttt{booking\_bool}).
+\]
+This keeps booked items as the highest-signal outcomes while still rewarding clicks.
+
+\subsection{Train/Validation Strategy}
+To avoid leakage, we split by \texttt{srch\_id} (query-level split), not by row. This prevents rows from the same search appearing in both train and validation.
+
+\subsection{Feature Engineering}
+We engineered four groups of features:
+\begin{itemize}
+\item \textbf{Raw context/property features:} site, destination, stars, review score, price, promotion, booking window, party size, etc.
+\item \textbf{Competitor aggregates:} mean \texttt{comp\_rate}, mean \texttt{comp\_inv}, and mean \texttt{comp\_rate\_percent\_diff} over competitors 1--8.
+\item \textbf{Within-query relative features:} price rank percentile, price minus search mean, stars minus search mean, review minus search mean.
+\item \textbf{Historical popularity priors:} global property score and destination-level score with Bayesian smoothing.
+\end{itemize}
+
+For missing values, we used model-compatible handling (tree model with native missing support) and aggregate smoothing/fallbacks where required.
+
+\section{Modeling and Evaluation}
+\label{sec:model}
+
+\subsection{Metric}
+We evaluated with NDCG@5 per query and averaged over queries, matching the competition objective.
+
+\subsection{Technique 1: Recommender-Style Popularity Baseline}
+As a recommender systems technique, we ranked hotels using historical relevance priors with Bayesian smoothing:
+\begin{itemize}
+\item Global property popularity: relevance per \texttt{prop\_id}.
+\item Destination-conditional popularity: relevance per \texttt{srch\_destination\_id} and \texttt{prop\_id} together.
+\item Final score: weighted combination (0.4 global + 0.6 destination-specific).
+\end{itemize}
+
+This baseline is simple, scalable, and interpretable, and it captures collaborative signal from aggregate user interactions.
+
+\subsection{Technique 2: Gradient Boosting Rank Surrogate}
+Our main model is a pointwise \texttt{HistGradientBoostingRegressor} trained on graded relevance labels. Key parameters:
+\begin{itemize}
+\item \texttt{max\_depth=8}
+\item \texttt{learning\_rate=0.06}
+\item \texttt{max\_iter=300}
+\item \texttt{l2\_regularization=0.02}
+\end{itemize}
+
+Although pointwise, this model works well because features include query-relative comparisons and strong priors.
+
+\subsection{Results}
+Table~\ref{tab:results} shows local validation performance.
+
+\begin{table}[t]
+\centering
+\caption{Validation NDCG@5 results.}
+\label{tab:results}
+\begin{tabular}{lr}
+\toprule
+Model & NDCG@5 \\
+\midrule
+Popularity recommender baseline & 0.2487 \\
+Gradient boosting (no mitigation) & 0.2813 \\
+Gradient boosting (bias-mitigated) & 0.2810 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The boosted model improves over the recommender baseline by about 0.0326 absolute NDCG@5, indicating that contextual and relative features provide substantial additional ranking signal.
+
+\subsection{What Did Not Work Well}
+Two observations from our iteration cycle:
+\begin{itemize}
+\item Using only absolute features (without within-query relative features) reduced top-rank quality.
+\item A pure global popularity ranking over-favored historically strong properties and underfit query context.
+\end{itemize}
+
+\section{Deployment and Ethical AI}
+\label{sec:deploy}
+
+\subsection{Scalable Deployment Discussion}
+A production deployment can be implemented as a two-stage architecture:
+\begin{itemize}
+\item \textbf{Offline batch layer:} refresh popularity priors and retrain gradient boosting model daily/weekly.
+\item \textbf{Online ranking layer:} compute lightweight query-relative features in real time, score candidate hotels, and return top-$k$ list.
+\item \textbf{Monitoring:} track NDCG proxies, CTR/booking rates, latency, drift, and fairness gaps over time.
+\end{itemize}
+
+The feature design in this report is compatible with this architecture: heavy aggregates are precomputed offline, while per-query transforms are low-latency.
+
+\subsection{Bias Detection}
+We audited group fairness across two user-query segments:
+\begin{itemize}
+\item \textbf{Family queries:} \texttt{srch\_children\_count > 0}
+\item \textbf{Non-family queries:} \texttt{srch\_children\_count = 0}
+\end{itemize}
+
+Using NDCG@5 by group as the fairness metric:
+\begin{itemize}
+\item Before mitigation: family 0.2997, non-family 0.2754, gap 0.0243.
+\end{itemize}
+
+\subsection{Bias Mitigation and Effectiveness}
+We applied a \textbf{pre-processing reweighting} technique: during model training, rows from family queries received weight 1.6 while others kept weight 1.0.
+
+After mitigation:
+\begin{itemize}
+\item Family NDCG@5: 0.2962
+\item Non-family NDCG@5: 0.2761
+\item Gap: 0.0201
+\end{itemize}
+
+This reduced the group performance gap by about 17\% with only a very small global NDCG@5 decrease (0.2813 to 0.2810), which we consider a reasonable trade-off.
+
+\section{Final Model and Submission}
+\label{sec:final}
+
+Our final submission model is the bias-mitigated gradient boosting rank surrogate trained with the engineered feature set and popularity priors. The generated submission file follows Kaggle format with columns \texttt{srch\_id, prop\_id} sorted by descending predicted relevance within each query.
+
+\section{What We Learned}
+\label{sec:learned}
+
+This assignment improved our understanding in three ways:
+\begin{itemize}
+\item \textbf{Ranking mindset:} optimizing query-level top-$k$ quality is different from standard classification.
+\item \textbf{Feature engineering impact:} relative within-query signals were more valuable than many raw features.
+\item \textbf{Responsible modeling:} fairness auditing and mitigation can be integrated with small performance cost.
+\end{itemize}
+
+Main challenges were data scale, missingness, and balancing relevance optimization with fairness. Unexpectedly, a simple popularity recommender already gave a strong baseline, showing the value of historical interaction priors in travel recommendation.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-Add your conclusion section here.
+We developed and evaluated two ranking approaches for hotel recommendation, including a recommender-style popularity baseline and a gradient boosting model with engineered contextual features. The final model achieved the best local NDCG@5 while also reducing group disparity through pre-processing reweighting. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with both performance and ethical AI requirements of the assignment.
 
 %
 % ---- Bibliography ----
@@ -61,10 +249,25 @@ Add your conclusion section here.
 %
 \begin{thebibliography}{8}
 
-% Add your references here
-% Example:
-% \bibitem{ref1}
-% Author, F.: Title of article. Journal \textbf{2}(5), 99--110 (2016)
+\bibitem{koren2009matrix}
+Koren, Y., Bell, R., Volinsky, C.: Matrix factorization techniques for recommender systems.
+Computer \textbf{42}(8), 30--37 (2009)
+
+\bibitem{burges2010ranknet}
+Burges, C.J.C.: From RankNet to LambdaRank to LambdaMART: An overview.
+Microsoft Research Technical Report, MSR-TR-2010-82 (2010)
+
+\bibitem{rendle2009bpr}
+Rendle, S., Freudenthaler, C., Gantner, Z., Schmidt-Thieme, L.: BPR: Bayesian personalized ranking from implicit feedback.
+In: UAI 2009, pp. 452--461 (2009)
+
+\bibitem{jannach2010recsys}
+Jannach, D., Zanker, M., Felfernig, A., Friedrich, G.: Recommender Systems: An Introduction.
+Cambridge University Press, Cambridge (2010)
+
+\bibitem{dcg_wiki}
+Wikipedia contributors: Discounted cumulative gain.
+\url{https://en.wikipedia.org/wiki/Discounted_cumulative_gain} (accessed 2026-04-23)
 
 \end{thebibliography}
 
