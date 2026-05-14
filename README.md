@@ -15,11 +15,11 @@
 
 ## Run Scripts
 
-From the project root, run any task script, for example:
+From the project root, run the Assignment 2 pipeline:
 
-- `python task1a/Assignment1.py`
-- `python task1b/task_1b.py`
-- `python task2a/task_2a.py`
+- `python assignment2_pipeline.py`
+
+This regenerates the EDA figures, metrics file, and `submission_final.csv`.
 
 ## Optional
 

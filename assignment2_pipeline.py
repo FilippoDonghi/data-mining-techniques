@@ -363,10 +363,11 @@ def fit_full_training_and_predict(
 
         X_chunk = chunk[FEATURE_COLUMNS]
         chunk["score"] = final_model.predict(X_chunk)
-        chunk = chunk.sort_values(["srch_id", "score"], ascending=[True, False])
-        ranked_parts.append(chunk[["srch_id", "prop_id"]])
+        ranked_parts.append(chunk[["srch_id", "prop_id", "score"]])
 
     submission = pd.concat(ranked_parts, ignore_index=True)
+    submission = submission.sort_values(["srch_id", "score"], ascending=[True, False])
+    submission = submission[["srch_id", "prop_id"]]
     submission.to_csv("submission_final.csv", index=False)
 
 

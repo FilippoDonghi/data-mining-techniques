@@ -45,7 +45,7 @@ The business objective is to improve ranking quality in hotel search, because be
 
 Prior recommender literature highlights three relevant ideas. First, collaborative and latent-factor methods are effective at capturing user-item preference patterns \cite{koren2009matrix}. Second, pairwise and listwise ranking methods (e.g., LambdaMART) are highly suitable when the evaluation target is NDCG \cite{burges2010ranknet}. Third, implicit-feedback recommenders (click/view/book interactions) require careful weighting of signal strength \cite{rendle2009bpr}.
 
-In practice, public discussions around the Expedia challenge emphasize similar points: strong hotel priors (historical property attractiveness), destination-context interactions, and tree-based ranking models typically outperform naive global sorting. This motivated our two-model setup:
+Work from the original Expedia personalized hotel search challenge also emphasizes the value of hotel characteristics, location attractiveness, user purchase history, and competitor information, and reports combining multiple ranking models for the final hotel ordering \cite{liu2013expedia}. This motivated our two-model setup:
 \begin{itemize}
 \item A recommender-style popularity model with Bayesian smoothing (strong interpretable baseline).
 \item A feature-rich gradient boosting model as our final method.
@@ -260,6 +260,10 @@ Microsoft Research Technical Report, MSR-TR-2010-82 (2010)
 \bibitem{rendle2009bpr}
 Rendle, S., Freudenthaler, C., Gantner, Z., Schmidt-Thieme, L.: BPR: Bayesian personalized ranking from implicit feedback.
 In: UAI 2009, pp. 452--461 (2009)
+
+\bibitem{liu2013expedia}
+Liu, X., Xu, B., Zhang, Y., Yan, Q., Pang, L., Li, Q., Sun, H., Wang, B.: Combination of diverse ranking models for personalized Expedia hotel searches.
+arXiv:1311.7679 (2013). \url{https://doi.org/10.48550/arXiv.1311.7679}
 
 \bibitem{jannach2010recsys}
 Jannach, D., Zanker, M., Felfernig, A., Friedrich, G.: Recommender Systems: An Introduction.
