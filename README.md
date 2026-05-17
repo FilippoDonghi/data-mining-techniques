@@ -19,7 +19,7 @@ From the project root, run the Assignment 2 pipeline:
 
 - `python assignment2_pipeline.py`
 
-This regenerates the EDA figures, metrics file, and `submission_final.csv`.
+This regenerates the EDA figures, metrics file, `submission_final.csv`, and `submission_mitigated.csv`.
 
 ## Optional
 

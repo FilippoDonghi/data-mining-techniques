@@ -1,25 +1,27 @@
 {
   "data": {
-    "train_rows": 958628,
-    "valid_rows": 241372,
-    "train_searches": 38595,
-    "valid_searches": 9649,
-    "book_rate": 0.027795833333333332,
-    "click_rate": 0.04472
+    "train_rows": 3966833,
+    "valid_rows": 991514,
+    "train_searches": 159836,
+    "valid_searches": 39959,
+    "book_rate": 0.027910511305481445,
+    "click_rate": 0.04474858254172207
   },
   "model_performance": {
-    "ndcg5_popularity": 0.24872030935520967,
-    "ndcg5_gbdt": 0.281346496035625,
-    "ndcg5_gbdt_mitigated": 0.2809520974218981
+    "ndcg5_popularity": 0.2416982508805291,
+    "ndcg5_lambdamart": 0.38953857696628524,
+    "ndcg5_lambdamart_mitigated": 0.3893903426516148,
+    "best_iter_unmit": 284,
+    "best_iter_mit": 317
   },
   "fairness": {
     "group_definition": "family if srch_children_count > 0 else non_family",
-    "family_share": 0.24282309047569697,
-    "ndcg5_family_before": 0.2997485902429826,
-    "ndcg5_non_family_before": 0.27544503056507497,
-    "gap_before": 0.02430355967790765,
-    "ndcg5_family_after": 0.29618402458746174,
-    "ndcg5_non_family_after": 0.276067289681833,
-    "gap_after": 0.020116734905628764
+    "family_share": 0.24455066443104181,
+    "ndcg5_family_before": 0.40634034973104743,
+    "ndcg5_non_family_before": 0.3840995825827011,
+    "gap_before": 0.02224076714834633,
+    "ndcg5_family_after": 0.4040053839657585,
+    "ndcg5_non_family_after": 0.3846592271475299,
+    "gap_after": 0.0193461568182286
   }
 }

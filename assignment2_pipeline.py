@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
 
+import lightgbm as lgb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
 
 
 TRAIN_PATH = "training_set_VU_DM.csv"
@@ -12,79 +12,26 @@ TEST_PATH = "test_set_VU_DM.csv"
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Keep the training subset manageable while still statistically meaningful.
-MAX_TRAIN_ROWS = 1_200_000
 RANDOM_STATE = 42
+PRICE_CLIP = 10_000.0
+PRICE_PER_NIGHT_CLIP = 5_000.0
+FAMILY_WEIGHT = 1.6
 
-BASE_COLUMNS = [
-    "srch_id",
-    "date_time",
-    "site_id",
-    "visitor_location_country_id",
-    "visitor_hist_starrating",
-    "visitor_hist_adr_usd",
-    "prop_country_id",
-    "prop_id",
-    "prop_starrating",
-    "prop_review_score",
-    "prop_brand_bool",
-    "prop_location_score1",
-    "prop_location_score2",
-    "prop_log_historical_price",
-    "price_usd",
-    "promotion_flag",
-    "srch_destination_id",
-    "srch_length_of_stay",
-    "srch_booking_window",
-    "srch_adults_count",
-    "srch_children_count",
-    "srch_room_count",
-    "srch_saturday_night_bool",
-    "srch_query_affinity_score",
-    "orig_destination_distance",
-    "random_bool",
-    "comp1_rate",
-    "comp1_inv",
-    "comp1_rate_percent_diff",
-    "comp2_rate",
-    "comp2_inv",
-    "comp2_rate_percent_diff",
-    "comp3_rate",
-    "comp3_inv",
-    "comp3_rate_percent_diff",
-    "comp4_rate",
-    "comp4_inv",
-    "comp4_rate_percent_diff",
-    "comp5_rate",
-    "comp5_inv",
-    "comp5_rate_percent_diff",
-    "comp6_rate",
-    "comp6_inv",
-    "comp6_rate_percent_diff",
-    "comp7_rate",
-    "comp7_inv",
-    "comp7_rate_percent_diff",
-    "comp8_rate",
-    "comp8_inv",
-    "comp8_rate_percent_diff",
-    "click_bool",
-    "booking_bool",
-]
-
+#full feature column list as fed into LightGBM
 FEATURE_COLUMNS = [
     "site_id",
     "visitor_location_country_id",
     "visitor_hist_starrating",
     "visitor_hist_adr_usd",
     "prop_country_id",
-    "prop_id",
     "prop_starrating",
     "prop_review_score",
     "prop_brand_bool",
     "prop_location_score1",
     "prop_location_score2",
     "prop_log_historical_price",
-    "price_usd",
+    "price_usd_log",
+    "price_per_night_log",
     "promotion_flag",
     "srch_destination_id",
     "srch_length_of_stay",
@@ -96,104 +43,364 @@ FEATURE_COLUMNS = [
     "srch_query_affinity_score",
     "orig_destination_distance",
     "random_bool",
-    "comp_rate_mean",
-    "comp_inv_mean",
-    "comp_price_diff_mean",
+    "comp_cheaper_count",
+    "comp_pricier_count",
+    "comp_unavailable_count",
+    "comp_diff_max",
+    "price_log_z",
+    "loc2_z",
+    "star_z",
+    "review_z",
+    "hist_price_z",
     "price_rank_pct",
-    "price_vs_search_mean",
-    "star_vs_search_mean",
-    "review_vs_search_mean",
-    "prop_pop_score",
-    "dest_prop_pop_score",
+    "loc2_rank_pct",
+    "star_rank_pct",
+    "prop_ctr",
+    "prop_book_rate",
+    "prop_mean_position",
+    "dest_prop_score",
+    "dest_star_score",
+    "dest_popularity",
+    "star_hist_diff",
+    "price_hist_diff",
+    "month",
+    "dow",
+    "review_rank_pct",
+    "srch_query_length",
+    "party_size",
+    "price_per_person_log",
 ]
 
 
-def relevance_label(df: pd.DataFrame) -> pd.Series:
+def comp_cols(prefix):
+    return [f"comp{i}_{prefix}" for i in range(1, 9)]
+
+
+def train_usecols():
+    base = [
+        "srch_id", "date_time", "site_id", "visitor_location_country_id",
+        "visitor_hist_starrating", "visitor_hist_adr_usd",
+        "prop_country_id", "prop_id", "prop_starrating", "prop_review_score",
+        "prop_brand_bool", "prop_location_score1", "prop_location_score2",
+        "prop_log_historical_price", "price_usd", "promotion_flag",
+        "srch_destination_id", "srch_length_of_stay", "srch_booking_window",
+        "srch_adults_count", "srch_children_count", "srch_room_count",
+        "srch_saturday_night_bool", "srch_query_affinity_score",
+        "orig_destination_distance", "random_bool",
+    ]
+    return base + comp_cols("rate") + comp_cols("inv") + comp_cols("rate_percent_diff") + [
+        "position", "click_bool", "booking_bool",
+    ]
+
+
+def test_usecols():
+    drop = {"position", "click_bool", "booking_bool"}
+    return [c for c in train_usecols() if c not in drop]
+
+
+def relevance_label(df):
     click_only = df["click_bool"] * (1 - df["booking_bool"])
     return 5 * df["booking_bool"] + click_only
 
 
-def compute_ndcg_at_k(df: pd.DataFrame, score_col: str, k: int = 5) -> float:
-    rows = []
+def compute_ndcg_at_k(df, score_col, k=5):
+    #exponential-gain NDCG matching the Kaggle definition
+    scores = []
     for _, grp in df.groupby("srch_id", sort=False):
         y_true = grp["relevance"].to_numpy(dtype=float)
         y_score = grp[score_col].to_numpy(dtype=float)
         order = np.argsort(-y_score)
         top_true = y_true[order][:k]
         discounts = 1.0 / np.log2(np.arange(2, len(top_true) + 2))
-        dcg = np.sum(top_true * discounts)
+        dcg = float(np.sum((2 ** top_true - 1) * discounts))
 
         ideal = np.sort(y_true)[::-1][:k]
-        idcg = np.sum(ideal * discounts)
+        idcg = float(np.sum((2 ** ideal - 1) * discounts))
         if idcg > 0:
-            rows.append(dcg / idcg)
-    return float(np.mean(rows)) if rows else 0.0
+            scores.append(dcg / idcg)
+    return float(np.mean(scores)) if scores else 0.0
 
 
-def family_group(df: pd.DataFrame) -> pd.Series:
-    # Proxy segmentation used for fairness analysis.
+def family_group(df):
     return np.where(df["srch_children_count"] > 0, "family", "non_family")
 
 
-def add_competitor_aggregates(df: pd.DataFrame) -> pd.DataFrame:
-    rate_cols = [f"comp{i}_rate" for i in range(1, 9)]
-    inv_cols = [f"comp{i}_inv" for i in range(1, 9)]
-    diff_cols = [f"comp{i}_rate_percent_diff" for i in range(1, 9)]
+#feature engineering helpers
 
-    df["comp_rate_mean"] = df[rate_cols].mean(axis=1)
-    df["comp_inv_mean"] = df[inv_cols].mean(axis=1)
-    df["comp_price_diff_mean"] = df[diff_cols].mean(axis=1)
+
+def add_price_features(df):
+    price = df["price_usd"].clip(lower=0, upper=PRICE_CLIP)
+    df["price_usd_log"] = np.log1p(price)
+    los = df["srch_length_of_stay"].clip(lower=1)
+    per_night = (df["price_usd"] / los).clip(lower=0, upper=PRICE_PER_NIGHT_CLIP)
+    df["price_per_night_log"] = np.log1p(per_night)
     return df
 
 
-def add_search_relative_features(df: pd.DataFrame) -> pd.DataFrame:
-    group = df.groupby("srch_id", sort=False)
-    df["price_rank_pct"] = group["price_usd"].rank(method="average", pct=True)
-    df["price_vs_search_mean"] = df["price_usd"] - group["price_usd"].transform("mean")
-    df["star_vs_search_mean"] = df["prop_starrating"] - group["prop_starrating"].transform("mean")
-    df["review_vs_search_mean"] = df["prop_review_score"].fillna(0) - group["prop_review_score"].transform("mean").fillna(0)
+def add_competitor_features(df):
+    rate = df[comp_cols("rate")].to_numpy()
+    inv = df[comp_cols("inv")].to_numpy()
+    diff = df[comp_cols("rate_percent_diff")].to_numpy()
+
+    #NaN comparisons evaluate to False, so summing booleans counts non-NaN matches
+    df["comp_cheaper_count"] = (rate == 1).sum(axis=1).astype(np.int8)
+    df["comp_pricier_count"] = (rate == -1).sum(axis=1).astype(np.int8)
+    df["comp_unavailable_count"] = (inv == 1).sum(axis=1).astype(np.int8)
+
+    diff_clipped = np.clip(diff, 0, 100)
+    max_diff = np.nanmax(diff_clipped, axis=1)
+    df["comp_diff_max"] = np.where(np.isnan(max_diff), 0.0, max_diff)
     return df
 
 
-def build_popularity_maps(df: pd.DataFrame):
-    tmp = df[["prop_id", "srch_destination_id", "relevance"]].copy()
+def add_within_query_features(df):
+    g = df.groupby("srch_id", sort=False)
 
-    global_prop = (
-        tmp.groupby("prop_id", as_index=True)["relevance"]
-        .agg(["sum", "count"])
-        .rename(columns={"sum": "rel_sum", "count": "n"})
-    )
-    global_mean = tmp["relevance"].mean()
-    m_global = 20.0
-    global_prop["score"] = (global_prop["rel_sum"] + m_global * global_mean) / (global_prop["n"] + m_global)
+    def zscore(col, out):
+        mean = g[col].transform("mean")
+        std = g[col].transform("std")
+        #avoid divide-by-zero when all rows in a query share the same value
+        std = std.where(std > 0, np.nan)
+        df[out] = (df[col] - mean) / std
 
-    dest_prop = (
-        tmp.groupby(["srch_destination_id", "prop_id"], as_index=True)["relevance"]
-        .agg(["sum", "count"])
-        .rename(columns={"sum": "rel_sum", "count": "n"})
+    zscore("price_usd_log", "price_log_z")
+    zscore("prop_location_score2", "loc2_z")
+    zscore("prop_starrating", "star_z")
+    zscore("prop_review_score", "review_z")
+    zscore("prop_log_historical_price", "hist_price_z")
+
+    df["price_rank_pct"] = g["price_usd"].rank(method="average", pct=True)
+    df["loc2_rank_pct"] = g["prop_location_score2"].rank(method="average", pct=True)
+    df["star_rank_pct"] = g["prop_starrating"].rank(method="average", pct=True)
+    df["review_rank_pct"] = g["prop_review_score"].rank(method="average", pct=True)
+    df["srch_query_length"] = g["srch_id"].transform("count").astype(np.int16)
+    return df
+
+
+def add_visitor_history_features(df):
+    df["star_hist_diff"] = (df["visitor_hist_starrating"] - df["prop_starrating"]).abs()
+    df["price_hist_diff"] = (df["visitor_hist_adr_usd"] - df["price_usd"]).abs()
+    party = (df["srch_adults_count"] + df["srch_children_count"]).clip(lower=1)
+    df["party_size"] = party.astype(np.int8)
+    per_night = np.expm1(df["price_per_night_log"])
+    df["price_per_person_log"] = np.log1p((per_night / party).clip(upper=PRICE_PER_NIGHT_CLIP))
+    return df
+
+
+def add_date_features(df):
+    dt = pd.to_datetime(df["date_time"], errors="coerce")
+    df["month"] = dt.dt.month.fillna(-1).astype(np.int8)
+    df["dow"] = dt.dt.dayofweek.fillna(-1).astype(np.int8)
+    return df
+
+
+#target encoding fit on a training fold then applied to any frame
+
+
+def build_target_maps(train_df):
+    click_prior = float(train_df["click_bool"].mean())
+    book_prior = float(train_df["booking_bool"].mean())
+    pos_prior = float(train_df["position"].mean())
+    m = 25.0
+
+    #use only random-order searches for unbiased CTR and booking rates;
+    #when random_bool=0 Expedia's own ranking causes position bias that inflates
+    #click/book rates for already-top-ranked hotels
+    unbiased = train_df[train_df["random_bool"] == 1]
+    if len(unbiased) < 5000:
+        unbiased = train_df  #fallback for tiny folds
+
+    prop_agg = unbiased.groupby("prop_id").agg(
+        n=("click_bool", "size"),
+        clicks=("click_bool", "sum"),
+        books=("booking_bool", "sum"),
     )
-    dest_mean = tmp.groupby("srch_destination_id")["relevance"].mean()
-    m_dest = 10.0
+    #mean position uses all data — position itself is still an informative signal
+    pos_agg = train_df.groupby("prop_id")["position"].mean().rename("mean_pos")
+    prop_agg = prop_agg.join(pos_agg, how="left")
+
+    prop_agg["prop_ctr"] = (prop_agg["clicks"] + m * click_prior) / (prop_agg["n"] + m)
+    prop_agg["prop_book_rate"] = (prop_agg["books"] + m * book_prior) / (prop_agg["n"] + m)
+
+    #unbiased destination-level relevance scores
+    rel = unbiased[["srch_destination_id", "prop_id", "click_bool", "booking_bool"]].copy()
+    rel["relevance"] = relevance_label(unbiased)
+    dest_mean = rel.groupby("srch_destination_id")["relevance"].mean()
+    dest_global = float(rel["relevance"].mean())
+    md = 10.0
+    dest_prop = rel.groupby(["srch_destination_id", "prop_id"]).agg(
+        n=("relevance", "size"),
+        rel_sum=("relevance", "sum"),
+    )
     dest_prop = dest_prop.join(dest_mean.rename("dest_mean"), on="srch_destination_id")
-    dest_prop["score"] = (dest_prop["rel_sum"] + m_dest * dest_prop["dest_mean"]) / (dest_prop["n"] + m_dest)
+    dest_prop["dest_prop_score"] = (
+        (dest_prop["rel_sum"] + md * dest_prop["dest_mean"]) / (dest_prop["n"] + md)
+    )
 
-    return global_prop["score"], dest_prop["score"], float(global_mean)
+    #destination-star affinity: how well does each star level perform at each destination?
+    dest_star = unbiased.groupby(["srch_destination_id", "prop_starrating"]).agg(
+        n=("booking_bool", "size"),
+        books=("booking_bool", "sum"),
+    )
+    dest_star["dest_star_score"] = (
+        (dest_star["books"] + md * book_prior) / (dest_star["n"] + md)
+    )
+
+    #overall destination booking rate
+    dest_pop = unbiased.groupby("srch_destination_id").agg(
+        n=("booking_bool", "size"),
+        books=("booking_bool", "sum"),
+    )
+    dest_pop["dest_popularity"] = (dest_pop["books"] + md * book_prior) / (dest_pop["n"] + md)
+
+    return {
+        "prop_ctr": prop_agg["prop_ctr"],
+        "prop_book_rate": prop_agg["prop_book_rate"],
+        "prop_mean_position": prop_agg["mean_pos"],
+        "dest_prop_score": dest_prop["dest_prop_score"],
+        "dest_star_score": dest_star["dest_star_score"],
+        "dest_popularity": dest_pop["dest_popularity"],
+        "fallback_ctr": click_prior,
+        "fallback_book": book_prior,
+        "fallback_pos": pos_prior,
+        "fallback_dest": dest_global,
+        "fallback_dest_star": book_prior,
+        "fallback_dest_pop": book_prior,
+    }
 
 
-def apply_popularity_features(
-    df: pd.DataFrame,
-    global_score_map: pd.Series,
-    dest_score_map: pd.Series,
-    fallback_mean: float,
-) -> pd.DataFrame:
-    df["prop_pop_score"] = df["prop_id"].map(global_score_map).fillna(fallback_mean)
-    index_key = pd.MultiIndex.from_frame(df[["srch_destination_id", "prop_id"]])
-    dest_scores = dest_score_map.reindex(index_key).to_numpy()
-    df["dest_prop_pop_score"] = np.where(np.isnan(dest_scores), df["prop_pop_score"], dest_scores)
+def apply_target_maps(df, maps):
+    df["prop_ctr"] = df["prop_id"].map(maps["prop_ctr"]).fillna(maps["fallback_ctr"])
+    df["prop_book_rate"] = df["prop_id"].map(maps["prop_book_rate"]).fillna(maps["fallback_book"])
+    df["prop_mean_position"] = df["prop_id"].map(maps["prop_mean_position"]).fillna(maps["fallback_pos"])
+
+    idx = pd.MultiIndex.from_frame(df[["srch_destination_id", "prop_id"]])
+    dest_scores = maps["dest_prop_score"].reindex(idx).to_numpy()
+    df["dest_prop_score"] = np.where(np.isnan(dest_scores), maps["fallback_dest"], dest_scores)
+
+    #destination-star affinity
+    idx_ds = pd.MultiIndex.from_frame(df[["srch_destination_id", "prop_starrating"]])
+    ds_scores = maps["dest_star_score"].reindex(idx_ds).to_numpy()
+    df["dest_star_score"] = np.where(np.isnan(ds_scores), maps["fallback_dest_star"], ds_scores)
+
+    #overall destination popularity
+    dest_pop = maps["dest_popularity"].reindex(df["srch_destination_id"]).to_numpy()
+    df["dest_popularity"] = np.where(np.isnan(dest_pop), maps["fallback_dest_pop"], dest_pop)
     return df
 
 
-def make_eda_plots(df: pd.DataFrame) -> None:
+def make_features(df, target_maps):
+    df = add_price_features(df)
+    df = add_competitor_features(df)
+    df = add_within_query_features(df)
+    df = add_visitor_history_features(df)
+    df = add_date_features(df)
+    df = apply_target_maps(df, target_maps)
+    return df
+
+
+#data loading and split
+
+
+def load_training():
+    print("Loading training set...")
+    df = pd.read_csv(TRAIN_PATH, usecols=train_usecols())
+    df["relevance"] = relevance_label(df)
+    print(f"  loaded {len(df):,} rows, {df['srch_id'].nunique():,} searches")
+    return df
+
+
+def split_by_search(df, frac_train=0.8):
+    rng = np.random.default_rng(RANDOM_STATE)
+    unique = df["srch_id"].unique()
+    rng.shuffle(unique)
+    cut = int(frac_train * len(unique))
+    train_ids = set(unique[:cut])
+    train_df = df[df["srch_id"].isin(train_ids)].copy()
+    valid_df = df[~df["srch_id"].isin(train_ids)].copy()
+    return train_df, valid_df
+
+
+def group_sizes(df):
+    #df must already be sorted by srch_id
+    return df.groupby("srch_id", sort=False).size().to_numpy()
+
+
+#modeling
+
+
+def make_ranker(n_estimators):
+    return lgb.LGBMRanker(
+        objective="lambdarank",
+        metric="ndcg",
+        n_estimators=n_estimators,
+        learning_rate=0.05,
+        num_leaves=255,
+        max_depth=-1,
+        min_child_samples=100,
+        feature_fraction=0.85,
+        bagging_fraction=0.85,
+        bagging_freq=5,
+        label_gain=[0, 1, 0, 0, 0, 31],
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+        verbose=-1,
+    )
+
+
+def fit_with_early_stopping(train_df, valid_df, sample_weight=None):
+    train_df = train_df.sort_values("srch_id").reset_index(drop=True)
+    valid_df = valid_df.sort_values("srch_id").reset_index(drop=True)
+
+    X_train = train_df[FEATURE_COLUMNS]
+    y_train = train_df["relevance"]
+    X_valid = valid_df[FEATURE_COLUMNS]
+    y_valid = valid_df["relevance"]
+
+    train_grp = group_sizes(train_df)
+    valid_grp = group_sizes(valid_df)
+
+    ranker = make_ranker(n_estimators=1500)
+    ranker.fit(
+        X_train,
+        y_train,
+        group=train_grp,
+        eval_set=[(X_valid, y_valid)],
+        eval_group=[valid_grp],
+        eval_at=[5],
+        sample_weight=sample_weight,
+        callbacks=[lgb.early_stopping(100), lgb.log_evaluation(50)],
+    )
+    return ranker, train_df, valid_df
+
+
+def fit_full(full_df, n_estimators, sample_weight=None):
+    full_df = full_df.sort_values("srch_id").reset_index(drop=True)
+    X = full_df[FEATURE_COLUMNS]
+    y = full_df["relevance"]
+    grp = group_sizes(full_df)
+    ranker = make_ranker(n_estimators=n_estimators)
+    ranker.fit(X, y, group=grp, sample_weight=sample_weight)
+    return ranker
+
+
+def score_test(ranker, target_maps, out_path):
+    print(f"Scoring test set -> {out_path}")
+    test_df = pd.read_csv(TEST_PATH, usecols=test_usecols())
+    test_df = make_features(test_df, target_maps)
+    test_df["score"] = ranker.predict(test_df[FEATURE_COLUMNS])
+    submission = (
+        test_df[["srch_id", "prop_id", "score"]]
+        .sort_values(["srch_id", "score"], ascending=[True, False])
+    )
+    submission[["srch_id", "prop_id"]].to_csv(out_path, index=False)
+    print(f"  wrote {len(submission):,} rows")
+
+
+#plots
+
+
+def make_eda_plots(df):
     missing_pct = (df.isna().mean() * 100).sort_values(ascending=False).head(15)
     plt.figure(figsize=(10, 5))
     missing_pct.plot(kind="bar", color="#2b8cbe")
@@ -203,10 +410,8 @@ def make_eda_plots(df: pd.DataFrame) -> None:
     plt.savefig(OUTPUT_DIR / "missingness_top15.png", dpi=150)
     plt.close()
 
-    sample = df[["price_usd", "prop_starrating", "prop_review_score", "relevance"]].copy()
-    sample = sample.replace([np.inf, -np.inf], np.nan).dropna()
+    sample = df[["price_usd", "relevance"]].replace([np.inf, -np.inf], np.nan).dropna()
     sample = sample.sample(min(len(sample), 100_000), random_state=RANDOM_STATE)
-
     plt.figure(figsize=(8, 5))
     plt.scatter(sample["price_usd"], sample["relevance"], s=5, alpha=0.08, c="#f03b20")
     plt.xscale("log")
@@ -218,77 +423,76 @@ def make_eda_plots(df: pd.DataFrame) -> None:
     plt.close()
 
 
-def load_training_subset() -> pd.DataFrame:
-    df = pd.read_csv(TRAIN_PATH, usecols=BASE_COLUMNS, nrows=MAX_TRAIN_ROWS)
-    df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce")
-    df["relevance"] = relevance_label(df)
-    return df
+def make_importance_plot(ranker):
+    importance = pd.DataFrame(
+        {
+            "feature": ranker.feature_name_,
+            "gain": ranker.booster_.feature_importance(importance_type="gain"),
+        }
+    ).sort_values("gain", ascending=True).tail(20)
+
+    plt.figure(figsize=(8, 8))
+    plt.barh(importance["feature"], importance["gain"], color="#2b8cbe")
+    plt.title("LightGBM Feature Importance (gain) — Top 20")
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "feature_importance_top20.png", dpi=150)
+    plt.close()
+    return importance
 
 
-def train_and_evaluate(df: pd.DataFrame):
-    unique_searches = df["srch_id"].drop_duplicates().sample(frac=1.0, random_state=RANDOM_STATE)
-    split_idx = int(0.8 * len(unique_searches))
-    train_ids = set(unique_searches.iloc[:split_idx].tolist())
+def popularity_baseline_ndcg(valid_df):
+    valid_df = valid_df.copy()
+    valid_df["score_pop"] = 0.5 * valid_df["dest_prop_score"] + 0.5 * valid_df["prop_ctr"]
+    return compute_ndcg_at_k(valid_df, "score_pop", k=5)
 
-    train_df = df[df["srch_id"].isin(train_ids)].copy()
-    valid_df = df[~df["srch_id"].isin(train_ids)].copy()
 
-    global_pop, dest_pop, fallback_mean = build_popularity_maps(train_df)
-    train_df = apply_popularity_features(train_df, global_pop, dest_pop, fallback_mean)
-    valid_df = apply_popularity_features(valid_df, global_pop, dest_pop, fallback_mean)
+def main():
+    df = load_training()
+    make_eda_plots(df)
 
-    train_df = add_competitor_aggregates(train_df)
-    valid_df = add_competitor_aggregates(valid_df)
-    train_df = add_search_relative_features(train_df)
-    valid_df = add_search_relative_features(valid_df)
+    train_df, valid_df = split_by_search(df, frac_train=0.8)
 
-    # Technique 1: recommender-style popularity ranking.
-    valid_df["score_popularity"] = 0.4 * valid_df["prop_pop_score"] + 0.6 * valid_df["dest_prop_pop_score"]
-    ndcg_pop = compute_ndcg_at_k(valid_df, "score_popularity", k=5)
+    print("Building target encoding maps on training fold...")
+    fold_maps = build_target_maps(train_df)
 
-    # Technique 2: gradient boosting pointwise rank surrogate.
-    model = HistGradientBoostingRegressor(
-        max_depth=8,
-        learning_rate=0.06,
-        max_iter=300,
-        l2_regularization=0.02,
-        random_state=RANDOM_STATE,
-    )
+    print("Engineering features...")
+    train_df = make_features(train_df, fold_maps)
+    valid_df = make_features(valid_df, fold_maps)
 
-    X_train = train_df[FEATURE_COLUMNS]
-    y_train = train_df["relevance"]
-    X_valid = valid_df[FEATURE_COLUMNS]
+    print("Training UNMITIGATED LambdaMART with early stopping...")
+    ranker_unmit, train_sorted, valid_sorted = fit_with_early_stopping(train_df, valid_df)
 
-    model.fit(X_train, y_train)
-    valid_df["score_gbdt"] = model.predict(X_valid)
-    ndcg_gbdt = compute_ndcg_at_k(valid_df, "score_gbdt", k=5)
+    valid_sorted["score_unmit"] = ranker_unmit.predict(valid_sorted[FEATURE_COLUMNS])
+    ndcg_unmit = compute_ndcg_at_k(valid_sorted, "score_unmit", k=5)
+    ndcg_pop = popularity_baseline_ndcg(valid_sorted)
+    print(f"  validation NDCG@5: lambdamart={ndcg_unmit:.4f}, popularity={ndcg_pop:.4f}")
 
-    # Fairness audit by family vs non-family searches.
-    valid_df["group"] = family_group(valid_df)
-    query_group = valid_df.groupby("srch_id", as_index=False)["group"].first()
+    valid_sorted["group"] = family_group(valid_sorted)
+    query_group = valid_sorted.groupby("srch_id", as_index=False)["group"].first()
     family_ids = set(query_group.loc[query_group["group"] == "family", "srch_id"])
     non_family_ids = set(query_group.loc[query_group["group"] == "non_family", "srch_id"])
-
-    ndcg_family_before = compute_ndcg_at_k(valid_df[valid_df["srch_id"].isin(family_ids)], "score_gbdt", k=5)
-    ndcg_non_family_before = compute_ndcg_at_k(valid_df[valid_df["srch_id"].isin(non_family_ids)], "score_gbdt", k=5)
-
-    # Pre-processing mitigation: up-weight family queries.
-    train_df["group"] = family_group(train_df)
-    sample_weight = np.where(train_df["group"] == "family", 1.6, 1.0)
-
-    mitigated_model = HistGradientBoostingRegressor(
-        max_depth=8,
-        learning_rate=0.06,
-        max_iter=300,
-        l2_regularization=0.02,
-        random_state=RANDOM_STATE,
+    ndcg_family_before = compute_ndcg_at_k(
+        valid_sorted[valid_sorted["srch_id"].isin(family_ids)], "score_unmit", k=5
     )
-    mitigated_model.fit(X_train, y_train, sample_weight=sample_weight)
-    valid_df["score_gbdt_mitigated"] = mitigated_model.predict(X_valid)
+    ndcg_non_family_before = compute_ndcg_at_k(
+        valid_sorted[valid_sorted["srch_id"].isin(non_family_ids)], "score_unmit", k=5
+    )
 
-    ndcg_gbdt_mitigated = compute_ndcg_at_k(valid_df, "score_gbdt_mitigated", k=5)
-    ndcg_family_after = compute_ndcg_at_k(valid_df[valid_df["srch_id"].isin(family_ids)], "score_gbdt_mitigated", k=5)
-    ndcg_non_family_after = compute_ndcg_at_k(valid_df[valid_df["srch_id"].isin(non_family_ids)], "score_gbdt_mitigated", k=5)
+    print("Training MITIGATED LambdaMART (family weight=1.6)...")
+    sw_fold = np.where(family_group(train_sorted) == "family", FAMILY_WEIGHT, 1.0)
+    ranker_mit, _, _ = fit_with_early_stopping(train_df, valid_df, sample_weight=sw_fold)
+
+    valid_sorted["score_mit"] = ranker_mit.predict(valid_sorted[FEATURE_COLUMNS])
+    ndcg_mit = compute_ndcg_at_k(valid_sorted, "score_mit", k=5)
+    ndcg_family_after = compute_ndcg_at_k(
+        valid_sorted[valid_sorted["srch_id"].isin(family_ids)], "score_mit", k=5
+    )
+    ndcg_non_family_after = compute_ndcg_at_k(
+        valid_sorted[valid_sorted["srch_id"].isin(non_family_ids)], "score_mit", k=5
+    )
+
+    importance = make_importance_plot(ranker_unmit)
+    importance.tail(20).to_csv(OUTPUT_DIR / "feature_variability_top15.csv", index=False)
 
     results = {
         "data": {
@@ -301,8 +505,10 @@ def train_and_evaluate(df: pd.DataFrame):
         },
         "model_performance": {
             "ndcg5_popularity": ndcg_pop,
-            "ndcg5_gbdt": ndcg_gbdt,
-            "ndcg5_gbdt_mitigated": ndcg_gbdt_mitigated,
+            "ndcg5_lambdamart": ndcg_unmit,
+            "ndcg5_lambdamart_mitigated": ndcg_mit,
+            "best_iter_unmit": int(ranker_unmit.best_iteration_ or ranker_unmit.n_estimators),
+            "best_iter_mit": int(ranker_mit.best_iteration_ or ranker_mit.n_estimators),
         },
         "fairness": {
             "group_definition": "family if srch_children_count > 0 else non_family",
@@ -315,75 +521,25 @@ def train_and_evaluate(df: pd.DataFrame):
             "gap_after": float(abs(ndcg_non_family_after - ndcg_family_after)),
         },
     }
-
-    feature_importance_proxy = pd.DataFrame(
-        {
-            "feature": FEATURE_COLUMNS,
-            "std": X_train[FEATURE_COLUMNS].std(numeric_only=True).fillna(0).values,
-        }
-    ).sort_values("std", ascending=False)
-    feature_importance_proxy.head(15).to_csv(OUTPUT_DIR / "feature_variability_top15.csv", index=False)
-
-    return mitigated_model, global_pop, dest_pop, fallback_mean, results
-
-
-def fit_full_training_and_predict(
-    model_template: HistGradientBoostingRegressor,
-    global_pop: pd.Series,
-    dest_pop: pd.Series,
-    fallback_mean: float,
-) -> None:
-    # Retrain on the same row budget but all searches for final inference.
-    full_df = load_training_subset()
-    full_df = apply_popularity_features(full_df, global_pop, dest_pop, fallback_mean)
-    full_df = add_competitor_aggregates(full_df)
-    full_df = add_search_relative_features(full_df)
-
-    X_full = full_df[FEATURE_COLUMNS]
-    y_full = full_df["relevance"]
-    sample_weight = np.where(family_group(full_df) == "family", 1.6, 1.0)
-
-    final_model = HistGradientBoostingRegressor(
-        max_depth=model_template.max_depth,
-        learning_rate=model_template.learning_rate,
-        max_iter=model_template.max_iter,
-        l2_regularization=model_template.l2_regularization,
-        random_state=RANDOM_STATE,
-    )
-    final_model.fit(X_full, y_full, sample_weight=sample_weight)
-
-    usecols_test = [c for c in BASE_COLUMNS if c not in {"click_bool", "booking_bool", "date_time"}] + ["date_time"]
-    usecols_test = [c for c in usecols_test if c in pd.read_csv(TEST_PATH, nrows=1).columns]
-
-    ranked_parts = []
-    for chunk in pd.read_csv(TEST_PATH, chunksize=400_000):
-        chunk = apply_popularity_features(chunk, global_pop, dest_pop, fallback_mean)
-        chunk = add_competitor_aggregates(chunk)
-        chunk = add_search_relative_features(chunk)
-
-        X_chunk = chunk[FEATURE_COLUMNS]
-        chunk["score"] = final_model.predict(X_chunk)
-        ranked_parts.append(chunk[["srch_id", "prop_id", "score"]])
-
-    submission = pd.concat(ranked_parts, ignore_index=True)
-    submission = submission.sort_values(["srch_id", "score"], ascending=[True, False])
-    submission = submission[["srch_id", "prop_id"]]
-    submission.to_csv("submission_final.csv", index=False)
-
-
-def main() -> None:
-    df = load_training_subset()
-    make_eda_plots(df)
-
-    model, global_pop, dest_pop, fallback_mean, results = train_and_evaluate(df)
-
     with open(OUTPUT_DIR / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
-
-    fit_full_training_and_predict(model, global_pop, dest_pop, fallback_mean)
-
-    print("Finished.")
     print(json.dumps(results, indent=2))
+
+    print("Refitting UNMITIGATED on full training set for Kaggle submission...")
+    full_maps = build_target_maps(df)
+    full_features_df = make_features(df.copy(), full_maps)
+    best_iter_unmit = int(ranker_unmit.best_iteration_ or ranker_unmit.n_estimators)
+    final_unmit = fit_full(full_features_df, n_estimators=best_iter_unmit)
+    score_test(final_unmit, full_maps, "submission_final.csv")
+
+    print("Refitting MITIGATED on full training set for report fairness numbers...")
+    full_sorted = full_features_df.sort_values("srch_id").reset_index(drop=True)
+    sw_full = np.where(family_group(full_sorted) == "family", FAMILY_WEIGHT, 1.0)
+    best_iter_mit = int(ranker_mit.best_iteration_ or ranker_mit.n_estimators)
+    final_mit = fit_full(full_features_df, n_estimators=best_iter_mit, sample_weight=sw_full)
+    score_test(final_mit, full_maps, "submission_mitigated.csv")
+
+    print("Done.")
 
 
 if __name__ == "__main__":

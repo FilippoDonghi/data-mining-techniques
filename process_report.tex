@@ -28,9 +28,9 @@ Date & Activity \\
 \midrule
 23 April 2026 & Read the assignment PDF, inspected the CSV schema, and confirmed the submission format. \\
 23 April 2026 & Performed exploratory data analysis, checked missing values, target imbalance, and price behavior. \\
-23 April 2026 & Built the first feature engineering pipeline and trained the popularity baseline and gradient boosting model. \\
-23 April 2026 & Evaluated NDCG@5 on a search-level validation split, then added fairness auditing and mitigation. \\
-23 April 2026 & Wrote the report in LNCS format, generated figures, and validated the LaTeX build. \\
+23 April 2026 & Built the feature engineering pipeline and trained the popularity baseline and LightGBM LambdaMART model. \\
+23 April 2026 & Evaluated NDCG@5 on a search-level validation split, then added fairness auditing and family-query reweighting. \\
+23 April 2026 & Wrote the report in LNCS format, generated figures and metrics from the pipeline, and validated the LaTeX build. \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -45,7 +45,7 @@ The work was divided by responsibility, but all three members contributed to the
 \toprule
 Member & Contribution \\
 \midrule
-Nicholas Boidi & Implemented the data pipeline, feature engineering, model training code, validation split, fairness analysis, and Kaggle submission generation. \\
+Nicholas Boidi & Implemented the data pipeline, feature engineering, LightGBM model training code, validation split, fairness analysis, and local Kaggle-format ranking file generation. \\
 Pablos Tselioudis Garmendia & Led the report structure, related work section, interpretation of results, and the discussion of scalable deployment. \\
 Filippo Donghi & Helped with exploratory analysis, reviewed plots and metrics, and contributed to the final editing and presentation of the report. \\
 \bottomrule
@@ -53,8 +53,8 @@ Filippo Donghi & Helped with exploratory analysis, reviewed plots and metrics, a
 \end{table}
 
 \section{Reflection}
-Overall, the cooperation was effective because we separated the assignment into clear stages and kept the intermediate results reproducible. A major challenge was the dataset size, which required us to iterate on a manageable subset before producing the final run. Another challenge was aligning model quality with the fairness requirement from the assignment. That forced us to think beyond pure accuracy and to check whether the model behaved differently across user groups.
+Overall, the cooperation was effective because we separated the assignment into clear stages and kept the intermediate results reproducible. A major challenge was the dataset size, which required efficient query-level feature engineering before producing the final full-data run. Another challenge was aligning model quality with the fairness requirement from the assignment. That forced us to think beyond pure accuracy and to check whether the model behaved differently across user groups.
 
-The most useful part of the collaboration was that each stage created input for the next one: the EDA informed the features, the validation results informed the fairness audit, and the report was written directly from the metrics produced by the pipeline. This reduced guesswork and made the final report easier to justify. If we had more time, we would further compare more ranking-oriented models and expand the fairness analysis to additional user segments.
+The most useful part of the collaboration was that each stage created input for the next one: the EDA informed the features, the validation results informed the fairness audit, and the report was written directly from the metrics produced by the pipeline. This reduced guesswork and made the final report easier to justify. If we had more time, we would compare additional ranking models or ensembles and expand the fairness analysis to additional user segments.
 
 \end{document}

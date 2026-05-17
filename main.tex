@@ -36,7 +36,7 @@ This report describes our solution for Assignment 2 of Data Mining Techniques. T
 
 The data contains approximately five million rows for training and five million for testing. Each row is one displayed property for one search query, with rich contextual, property, and competitor information. We followed a CRISP-DM style workflow: (i) related work and business framing, (ii) exploratory analysis, (iii) feature engineering and split strategy, (iv) modeling and evaluation with at least two methods, and (v) deployment considerations including ethical AI bias analysis and mitigation.
 
-Our best local model is a gradient boosting rank surrogate with fairness reweighting in training. It improves strongly over a recommender-style popularity baseline while reducing performance disparity between family and non-family queries.
+Our best local model is a LightGBM LambdaMART ranker. It improves strongly over a recommender-style popularity baseline, while the reweighted variant reduces performance disparity between family and non-family queries with a very small decrease in global NDCG@5.
 
 \section{Related Work and Business Understanding}
 \label{sec:related}
@@ -48,14 +48,14 @@ Prior recommender literature highlights three relevant ideas. First, collaborati
 Work from the original Expedia personalized hotel search challenge also emphasizes the value of hotel characteristics, location attractiveness, user purchase history, and competitor information, and reports combining multiple ranking models for the final hotel ordering \cite{liu2013expedia}. This motivated our two-model setup:
 \begin{itemize}
 \item A recommender-style popularity model with Bayesian smoothing (strong interpretable baseline).
-\item A feature-rich gradient boosting model as our final method.
+\item A feature-rich LightGBM LambdaMART model as our final method.
 \end{itemize}
 
 \section{Data Understanding}
 \label{sec:data}
 
 \subsection{Dataset Profile}
-We used the provided competition data only. In our reproducible training run, we loaded 1{,}200{,}000 training rows to iterate efficiently while preserving search-level structure. The resulting split statistics are shown in Table~\ref{tab:splitstats}.
+We used the provided competition data only. In our reproducible training run, we loaded the full training file (4{,}958{,}347 rows) and split it by search query. The resulting split statistics are shown in Table~\ref{tab:splitstats}.
 
 \begin{table}[t]
 \centering
@@ -65,11 +65,11 @@ We used the provided competition data only. In our reproducible training run, we
 \toprule
 Statistic & Value \\
 \midrule
-Training rows & 958{,}628 \\
-Validation rows & 241{,}372 \\
-Training queries (\texttt{srch\_id}) & 38{,}595 \\
-Validation queries (\texttt{srch\_id}) & 9{,}649 \\
-Booking rate & 2.78\% \\
+Training rows & 3{,}966{,}833 \\
+Validation rows & 991{,}514 \\
+Training queries (\texttt{srch\_id}) & 159{,}836 \\
+Validation queries (\texttt{srch\_id}) & 39{,}959 \\
+Booking rate & 2.79\% \\
 Click rate & 4.47\% \\
 \bottomrule
 \end{tabular}
@@ -117,10 +117,10 @@ To avoid leakage, we split by \texttt{srch\_id} (query-level split), not by row.
 \subsection{Feature Engineering}
 We engineered four groups of features:
 \begin{itemize}
-\item \textbf{Raw context/property features:} site, destination, stars, review score, price, promotion, booking window, party size, etc.
-\item \textbf{Competitor aggregates:} mean \texttt{comp\_rate}, mean \texttt{comp\_inv}, and mean \texttt{comp\_rate\_percent\_diff} over competitors 1--8.
-\item \textbf{Within-query relative features:} price rank percentile, price minus search mean, stars minus search mean, review minus search mean.
-\item \textbf{Historical popularity priors:} global property score and destination-level score with Bayesian smoothing.
+\item \textbf{Raw context/property features:} site, destination, stars, review score, promotion, booking window, party size, date features, and log-transformed price features.
+\item \textbf{Competitor features:} counts of cheaper, pricier, and unavailable competitors plus the maximum clipped competitor price difference.
+\item \textbf{Within-query relative features:} z-scores and rank percentiles for price, location score, stars, and review score, plus query length.
+\item \textbf{Target-encoded priors:} property CTR, property booking rate, mean property position, destination-property score, destination-star score, and destination popularity with smoothing and fallbacks.
 \end{itemize}
 
 For missing values, we used model-compatible handling (tree model with native missing support) and aggregate smoothing/fallbacks where required.
@@ -134,23 +134,25 @@ We evaluated with NDCG@5 per query and averaged over queries, matching the compe
 \subsection{Technique 1: Recommender-Style Popularity Baseline}
 As a recommender systems technique, we ranked hotels using historical relevance priors with Bayesian smoothing:
 \begin{itemize}
-\item Global property popularity: relevance per \texttt{prop\_id}.
-\item Destination-conditional popularity: relevance per \texttt{srch\_destination\_id} and \texttt{prop\_id} together.
-\item Final score: weighted combination (0.4 global + 0.6 destination-specific).
+\item Destination-property score: smoothed relevance per \texttt{srch\_destination\_id} and \texttt{prop\_id}.
+\item Property CTR: smoothed historical click-through rate per \texttt{prop\_id}.
+\item Final score: weighted combination (0.5 destination-property score + 0.5 property CTR).
 \end{itemize}
 
 This baseline is simple, scalable, and interpretable, and it captures collaborative signal from aggregate user interactions.
 
-\subsection{Technique 2: Gradient Boosting Rank Surrogate}
-Our main model is a pointwise \texttt{HistGradientBoostingRegressor} trained on graded relevance labels. Key parameters:
+\subsection{Technique 2: LightGBM LambdaMART Ranker}
+Our main model is a listwise \texttt{LGBMRanker} trained with the LambdaMART objective and search-level group sizes. Key parameters:
 \begin{itemize}
-\item \texttt{max\_depth=8}
-\item \texttt{learning\_rate=0.06}
-\item \texttt{max\_iter=300}
-\item \texttt{l2\_regularization=0.02}
+\item \texttt{objective=lambdarank}
+\item \texttt{learning\_rate=0.05}
+\item \texttt{num\_leaves=255}
+\item \texttt{feature\_fraction=0.85}
+\item \texttt{bagging\_fraction=0.85}
+\item \texttt{n\_estimators=1500} with early stopping
 \end{itemize}
 
-Although pointwise, this model works well because features include query-relative comparisons and strong priors.
+The unmitigated model stopped at iteration 284, and the mitigated model stopped at iteration 317.
 
 \subsection{Results}
 Table~\ref{tab:results} shows local validation performance.
@@ -163,20 +165,20 @@ Table~\ref{tab:results} shows local validation performance.
 \toprule
 Model & NDCG@5 \\
 \midrule
-Popularity recommender baseline & 0.2487 \\
-Gradient boosting (no mitigation) & 0.2813 \\
-Gradient boosting (bias-mitigated) & 0.2810 \\
+Popularity recommender baseline & 0.2417 \\
+LambdaMART (no mitigation) & 0.3895 \\
+LambdaMART (bias-mitigated) & 0.3894 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The boosted model improves over the recommender baseline by about 0.0326 absolute NDCG@5, indicating that contextual and relative features provide substantial additional ranking signal.
+The LambdaMART model improves over the recommender baseline by about 0.1478 absolute NDCG@5, indicating that contextual, target-encoded, and relative features provide substantial additional ranking signal.
 
 \subsection{What Did Not Work Well}
 Two observations from our iteration cycle:
 \begin{itemize}
-\item Using only absolute features (without within-query relative features) reduced top-rank quality.
-\item A pure global popularity ranking over-favored historically strong properties and underfit query context.
+\item Using only absolute features without within-query relative features reduced top-rank quality.
+\item A pure popularity ranking over-favored historically strong properties and underfit query context.
 \end{itemize}
 
 \section{Deployment and Ethical AI}
@@ -185,7 +187,7 @@ Two observations from our iteration cycle:
 \subsection{Scalable Deployment Discussion}
 A production deployment can be implemented as a two-stage architecture:
 \begin{itemize}
-\item \textbf{Offline batch layer:} refresh popularity priors and retrain gradient boosting model daily/weekly.
+\item \textbf{Offline batch layer:} refresh target-encoded priors and retrain the LambdaMART model daily/weekly.
 \item \textbf{Online ranking layer:} compute lightweight query-relative features in real time, score candidate hotels, and return top-$k$ list.
 \item \textbf{Monitoring:} track NDCG proxies, CTR/booking rates, latency, drift, and fairness gaps over time.
 \end{itemize}
@@ -201,7 +203,7 @@ We audited group fairness across two user-query segments:
 
 Using NDCG@5 by group as the fairness metric:
 \begin{itemize}
-\item Before mitigation: family 0.2997, non-family 0.2754, gap 0.0243.
+\item Before mitigation: family 0.4063, non-family 0.3841, gap 0.0222.
 \end{itemize}
 
 \subsection{Bias Mitigation and Effectiveness}
@@ -209,17 +211,17 @@ We applied a \textbf{pre-processing reweighting} technique: during model trainin
 
 After mitigation:
 \begin{itemize}
-\item Family NDCG@5: 0.2962
-\item Non-family NDCG@5: 0.2761
-\item Gap: 0.0201
+\item Family NDCG@5: 0.4040
+\item Non-family NDCG@5: 0.3847
+\item Gap: 0.0193
 \end{itemize}
 
-This reduced the group performance gap by about 17\% with only a very small global NDCG@5 decrease (0.2813 to 0.2810), which we consider a reasonable trade-off.
+This reduced the group performance gap by about 13\% with only a very small global NDCG@5 decrease (0.3895 to 0.3894), which we consider a reasonable trade-off.
 
 \section{Final Model and Submission}
 \label{sec:final}
 
-Our final submission model is the bias-mitigated gradient boosting rank surrogate trained with the engineered feature set and popularity priors. The generated submission file follows Kaggle format with columns \texttt{srch\_id, prop\_id} sorted by descending predicted relevance within each query.
+Our final ranking file is produced by the unmitigated LambdaMART model trained with the engineered feature set and target-encoded priors. The pipeline also writes a mitigated ranking file for the fairness comparison. Both generated files follow Kaggle format with columns \texttt{srch\_id, prop\_id} sorted by descending predicted relevance within each query.
 
 \section{What We Learned}
 \label{sec:learned}
@@ -236,7 +238,7 @@ Main challenges were data scale, missingness, and balancing relevance optimizati
 \section{Conclusion}
 \label{sec:conclusion}
 
-We developed and evaluated two ranking approaches for hotel recommendation, including a recommender-style popularity baseline and a gradient boosting model with engineered contextual features. The final model achieved the best local NDCG@5 while also reducing group disparity through pre-processing reweighting. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with both performance and ethical AI requirements of the assignment.
+We developed and evaluated two ranking approaches for hotel recommendation: a recommender-style popularity baseline and a LightGBM LambdaMART model with engineered contextual features. The unmitigated LambdaMART model achieved the best local NDCG@5, while reweighting reduced group disparity with a very small global performance cost. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with the assignment's performance and ethical AI requirements.
 
 %
 % ---- Bibliography ----
