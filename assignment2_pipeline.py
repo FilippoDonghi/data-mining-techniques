@@ -422,6 +422,24 @@ def make_eda_plots(df):
     plt.savefig(OUTPUT_DIR / "price_vs_relevance.png", dpi=150)
     plt.close()
 
+    position_bias = (
+        df[["random_bool", "position", "booking_bool"]]
+        .dropna()
+        .groupby(["random_bool", "position"], as_index=False)["booking_bool"]
+        .mean()
+    )
+    plt.figure(figsize=(8, 5))
+    for random_bool, label in [(0, "Normal sort"), (1, "Random sort")]:
+        subset = position_bias[position_bias["random_bool"] == random_bool]
+        plt.plot(subset["position"], subset["booking_bool"], marker="o", linewidth=1.8, label=label)
+    plt.title("Position Bias by Sort Mode")
+    plt.xlabel("Display position")
+    plt.ylabel("Mean booking rate")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "position_bias.png", dpi=150)
+    plt.close()
+
 
 def make_importance_plot(ranker):
     importance = pd.DataFrame(

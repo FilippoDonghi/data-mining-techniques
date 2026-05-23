@@ -1,9 +1,10 @@
 % This is main.tex, a Data Mining Techniques assignment for Vrije Universiteit Amsterdam
 % Using LLNCS document class for formatting
 
-\documentclass[runningheads]{llncs}
+\documentclass{llncs}
 
 \usepackage{graphicx}
+\graphicspath{{outputs/}}
 \usepackage{booktabs}
 \usepackage{amsmath}
 \usepackage{url}
@@ -17,9 +18,7 @@
 
 \title{Data Mining Techniques Assignment}
 
-\author{Nicholas Boidi\inst{1} \and Pablos Tselioudis Garmendia\inst{1} \and Filippo Donghi\inst{1}}
-
-\authorrunning{Boidi, Tselioudis Garmendia, and Donghi}
+\author{Nicholas Boidi \and Pablos Tselioudis Garmendia \and Filippo Donghi}
 
 \institute{Vrije Universiteit Amsterdam, Amsterdam, Netherlands \\
 Group Number: 65 \\
@@ -27,16 +26,15 @@ Student Numbers: 2892127, 2891511, 2888236}
 
 \maketitle
 
-\keywords{Recommender Systems \and Learning to Rank \and Expedia \and NDCG \and Fairness}
 
 \section{Introduction}
 \label{sec:intro}
 
 This report describes our solution for Assignment 2 of Data Mining Techniques. The task is to rank hotel properties per search query (\texttt{srch\_id}) so that booked hotels appear at the top, followed by clicked hotels, measured with NDCG@5 on the Kaggle competition server.
 
-The data contains approximately five million rows for training and five million for testing. Each row is one displayed property for one search query, with rich contextual, property, and competitor information. We followed a CRISP-DM style workflow: (i) related work and business framing, (ii) exploratory analysis, (iii) feature engineering and split strategy, (iv) modeling and evaluation with at least two methods, and (v) deployment considerations including ethical AI bias analysis and mitigation.
+The data contains approximately five million rows for training and five million for testing. Each row is one displayed property for one search query, with rich contextual, property, and competitor information. We followed the data mining workflow suggested by the assignment, moving from related work and business framing into exploratory analysis, then feature engineering and the split strategy, then modeling and evaluation with at least two methods, and finally deployment considerations including ethical AI bias analysis and mitigation.
 
-Our best local model is a LightGBM LambdaMART ranker. It improves strongly over a recommender-style popularity baseline, while the reweighted variant reduces performance disparity between family and non-family queries with a very small decrease in global NDCG@5.
+Our main model is a LightGBM LambdaMART ranker. It improves strongly over a recommender-style popularity baseline, and a reweighted variant reduces the performance gap between family and non-family queries.
 
 \section{Related Work and Business Understanding}
 \label{sec:related}
@@ -55,7 +53,7 @@ Work from the original Expedia personalized hotel search challenge also emphasiz
 \label{sec:data}
 
 \subsection{Dataset Profile}
-We used the provided competition data only. In our reproducible training run, we loaded the full training file (4{,}958{,}347 rows) and split it by search query. The resulting split statistics are shown in Table~\ref{tab:splitstats}.
+We used the provided competition data only. We loaded the full training set of 4{,}958{,}347 rows and split by \texttt{srch\_id} (query-level) into 80\% training and 20\% validation. The resulting split statistics are shown in Table~\ref{tab:splitstats}.
 
 \begin{table}[t]
 \centering
@@ -80,25 +78,24 @@ The low booking rate confirms heavy class imbalance. Since NDCG@5 is query-wise 
 \subsection{Exploratory Findings}
 We performed EDA on missingness, target sparsity, and key relationships:
 \begin{itemize}
-\item Competitor fields (\texttt{comp\*}) and historical visitor fields have substantial missingness.
-\item Price has a non-linear relationship with relevance; very low and very high prices both can underperform depending on context.
+\item Competitor fields (\texttt{comp\*}) and historical visitor fields have substantial missingness, as shown in Figure~\ref{fig:missing}.
+\item \textbf{Position bias:} when results use Expedia's own sort (\texttt{random\_bool=0}), hotels near the top are booked far more often simply because of where they sit on the page. Under random sort (\texttt{random\_bool=1}) the booking rate stays almost flat across positions (Figure~\ref{fig:posbias}). This finding is what led us to compute the popularity priors from random-sort rows only.
+\item Price has a non-linear relationship with relevance. Very low and very high prices can both underperform depending on context, and raw price spans seven orders of magnitude because of mixed country conventions.
 \item Relative features inside a search list (e.g., price rank within \texttt{srch\_id}) are more informative than absolute values alone.
 \end{itemize}
 
-Figure~\ref{fig:missing} and Figure~\ref{fig:price_rel} summarize these observations.
-
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.9\textwidth]{outputs/missingness_top15.png}
+\includegraphics[width=0.9\textwidth]{missingness_top15.png}
 \caption{Top-15 features by percentage of missing values.}
 \label{fig:missing}
 \end{figure}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.8\textwidth]{outputs/price_vs_relevance.png}
-\caption{Price vs. relevance on log-scale (sampled for visibility).}
-\label{fig:price_rel}
+\includegraphics[width=0.85\textwidth]{position_bias.png}
+\caption{Mean booking rate by display position. Under Expedia's normal sort, hotels in top positions are booked far more often. Under random sort the rate stays nearly flat. The gap between the two curves reflects position bias rather than hotel quality, which is why the popularity priors use \texttt{random\_bool=1} rows only.}
+\label{fig:posbias}
 \end{figure}
 
 \section{Data Preparation}
@@ -115,15 +112,17 @@ This keeps booked items as the highest-signal outcomes while still rewarding cli
 To avoid leakage, we split by \texttt{srch\_id} (query-level split), not by row. This prevents rows from the same search appearing in both train and validation.
 
 \subsection{Feature Engineering}
-We engineered four groups of features:
+We engineered six groups of features:
 \begin{itemize}
-\item \textbf{Raw context/property features:} site, destination, stars, review score, promotion, booking window, party size, date features, and log-transformed price features.
-\item \textbf{Competitor features:} counts of cheaper, pricier, and unavailable competitors plus the maximum clipped competitor price difference.
-\item \textbf{Within-query relative features:} z-scores and rank percentiles for price, location score, stars, and review score, plus query length.
-\item \textbf{Target-encoded priors:} property CTR, property booking rate, mean property position, destination-property score, destination-star score, and destination popularity with smoothing and fallbacks.
+\item \textbf{Raw context/property features:} site, destination, stars, review score, promotion, booking window, party size, etc.
+\item \textbf{Price cleaning:} \texttt{price\_usd} is clipped at \$10{,}000 and log-transformed, and the per-night price (\texttt{price\_usd} / \texttt{srch\_length\_of\_stay}) is transformed the same way. Raw prices span seven orders of magnitude because of mixed country conventions such as per-night versus whole-stay pricing and prices shown with or without tax, which makes log-scaling necessary.
+\item \textbf{Competitor signals:} counts of competitors where Expedia is cheaper, pricier, or unavailable, plus the maximum absolute price difference. These replace na\"ive column means over the mostly-missing competitor fields.
+\item \textbf{Within-query relative features:} z-scores of log-price, location score, star rating, review score, and log-historical price within each \texttt{srch\_id}. We also add rank percentiles of price, location score, star rating, and review score, along with the query length, meaning the number of candidate hotels per search.
+\item \textbf{Popularity priors} (fit on the training fold only): Bayesian-smoothed property click-through and booking rates, mean historical position, destination-property relevance, destination-star affinity, and overall destination booking rate.
+\item \textbf{Visitor-history and temporal features:} differences from historical star and price preferences, total party size, per-person per-night price, month, and day-of-week.
 \end{itemize}
 
-For missing values, we used model-compatible handling (tree model with native missing support) and aggregate smoothing/fallbacks where required.
+For missing values, we relied on LightGBM's native NaN handling for raw features and used smoothed fallback means for target-encoded priors.
 
 \section{Modeling and Evaluation}
 \label{sec:model}
@@ -132,27 +131,24 @@ For missing values, we used model-compatible handling (tree model with native mi
 We evaluated with NDCG@5 per query and averaged over queries, matching the competition objective.
 
 \subsection{Technique 1: Recommender-Style Popularity Baseline}
-As a recommender systems technique, we ranked hotels using historical relevance priors with Bayesian smoothing:
+As a recommender systems technique, we ranked hotels using historical popularity priors with Bayesian smoothing:
 \begin{itemize}
-\item Destination-property score: smoothed relevance per \texttt{srch\_destination\_id} and \texttt{prop\_id}.
-\item Property CTR: smoothed historical click-through rate per \texttt{prop\_id}.
-\item Final score: weighted combination (0.5 destination-property score + 0.5 property CTR).
+\item Global property signal: smoothed click-through rate per \texttt{prop\_id} (\texttt{prop\_ctr}).
+\item Destination-conditional signal: smoothed relevance for destination-property pairs.
+\item Final score: equal-weighted average of the two priors, 0.5 each.
 \end{itemize}
 
 This baseline is simple, scalable, and interpretable, and it captures collaborative signal from aggregate user interactions.
 
-\subsection{Technique 2: LightGBM LambdaMART Ranker}
-Our main model is a listwise \texttt{LGBMRanker} trained with the LambdaMART objective and search-level group sizes. Key parameters:
+\subsection{Technique 2: LightGBM LambdaMART}
+Our main model is \texttt{LGBMRanker} with the LambdaMART objective, a listwise learning-to-rank algorithm that directly optimises NDCG \cite{burges2010ranknet}. The model receives a \emph{group} parameter specifying the number of rows per query, enabling it to compare candidates within the same search. Key parameters:
 \begin{itemize}
-\item \texttt{objective=lambdarank}
-\item \texttt{learning\_rate=0.05}
-\item \texttt{num\_leaves=255}
-\item \texttt{feature\_fraction=0.85}
-\item \texttt{bagging\_fraction=0.85}
-\item \texttt{n\_estimators=1500} with early stopping
+\item \texttt{learning\_rate=0.05}, \texttt{num\_leaves=255}
+\item \texttt{feature\_fraction=0.85}, \texttt{bagging\_fraction=0.85}, \texttt{bagging\_freq=5}
+\item \texttt{min\_child\_samples=100}
+\item \texttt{label\_gain=[0,1,0,0,0,31]} (maps relevance 0/1/5 to gains $2^r-1$)
+\item Early stopping on validation NDCG@5 with patience 100, with the best iteration found at 284
 \end{itemize}
-
-The unmitigated model stopped at iteration 284, and the mitigated model stopped at iteration 317.
 
 \subsection{Results}
 Table~\ref{tab:results} shows local validation performance.
@@ -166,19 +162,28 @@ Table~\ref{tab:results} shows local validation performance.
 Model & NDCG@5 \\
 \midrule
 Popularity recommender baseline & 0.2417 \\
-LambdaMART (no mitigation) & 0.3895 \\
-LambdaMART (bias-mitigated) & 0.3894 \\
+LightGBM LambdaMART (no mitigation) & 0.3895 \\
+LightGBM LambdaMART (bias-mitigated) & 0.3894 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The LambdaMART model improves over the recommender baseline by about 0.1478 absolute NDCG@5, indicating that contextual, target-encoded, and relative features provide substantial additional ranking signal.
+The LambdaMART model improves over the recommender baseline by 0.1478 absolute NDCG@5 (+61\%), confirming that a dedicated ranking objective with query-relative and unbiased target-encoded features provides substantial additional signal over popularity alone. Figure~\ref{fig:importance} shows the top-20 features by LightGBM gain importance.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\textwidth]{feature_importance_top20.png}
+\caption{Top-20 features by LightGBM gain importance. Target-encoded priors and within-query relative price features dominate.}
+\label{fig:importance}
+\end{figure}
 
 \subsection{What Did Not Work Well}
-Two observations from our iteration cycle:
+Four observations from our iteration cycle:
 \begin{itemize}
-\item Using only absolute features without within-query relative features reduced top-rank quality.
-\item A pure popularity ranking over-favored historically strong properties and underfit query context.
+\item A pointwise regression objective (MSE on graded labels) ranked poorly compared to LambdaMART because it does not directly optimise the list-level NDCG criterion.
+\item Within-query relative features such as z-scores and rank percentiles sit near the top of the gain-importance plot. Earlier iterations that leaned more on raw absolute features ranked worse at the top, which matches the recommender literature on the value of relative signals within a list.
+\item Plain column-wise means over the mostly-missing competitor fields (94--98\% missing) would mostly average noise, so we encoded them as counts of competitors where Expedia is cheaper, pricier, or sold out. The count form is naturally immune to the missing values, because a missing comparison simply does not add to any count.
+\item Feeding hotel and destination identifiers to LightGBM as native categorical features lowered validation NDCG@5. Their high cardinality let the trees memorise individual hotels and overfit the training fold, so the identifiers were kept only as inputs to target encoding.
 \end{itemize}
 
 \section{Deployment and Ethical AI}
@@ -187,12 +192,12 @@ Two observations from our iteration cycle:
 \subsection{Scalable Deployment Discussion}
 A production deployment can be implemented as a two-stage architecture:
 \begin{itemize}
-\item \textbf{Offline batch layer:} refresh target-encoded priors and retrain the LambdaMART model daily/weekly.
+\item \textbf{Offline batch layer:} refresh popularity priors and retrain LambdaMART model daily/weekly.
 \item \textbf{Online ranking layer:} compute lightweight query-relative features in real time, score candidate hotels, and return top-$k$ list.
 \item \textbf{Monitoring:} track NDCG proxies, CTR/booking rates, latency, drift, and fairness gaps over time.
 \end{itemize}
 
-The feature design in this report is compatible with this architecture: heavy aggregates are precomputed offline, while per-query transforms are low-latency.
+The feature design in this report fits this architecture well, since heavy aggregates are precomputed offline while per-query transforms stay low-latency.
 
 \subsection{Bias Detection}
 We audited group fairness across two user-query segments:
@@ -206,8 +211,10 @@ Using NDCG@5 by group as the fairness metric:
 \item Before mitigation: family 0.4063, non-family 0.3841, gap 0.0222.
 \end{itemize}
 
+Family queries score higher on average, likely because families search more specifically (clearer destination and party-size constraints narrow the relevant set). A positive gap still represents unequal treatment across user segments.
+
 \subsection{Bias Mitigation and Effectiveness}
-We applied a \textbf{pre-processing reweighting} technique: during model training, rows from family queries received weight 1.6 while others kept weight 1.0.
+We applied a \textbf{pre-processing reweighting} technique. During model training, rows from family queries received weight 1.6 while other rows kept weight 1.0. This tests whether giving the smaller query segment more influence can reduce group-level ranking disparity.
 
 After mitigation:
 \begin{itemize}
@@ -216,12 +223,7 @@ After mitigation:
 \item Gap: 0.0193
 \end{itemize}
 
-This reduced the group performance gap by about 13\% with only a very small global NDCG@5 decrease (0.3895 to 0.3894), which we consider a reasonable trade-off.
-
-\section{Final Model and Submission}
-\label{sec:final}
-
-Our final ranking file is produced by the unmitigated LambdaMART model trained with the engineered feature set and target-encoded priors. The pipeline also writes a mitigated ranking file for the fairness comparison. Both generated files follow Kaggle format with columns \texttt{srch\_id, prop\_id} sorted by descending predicted relevance within each query.
+The mitigation raised non-family NDCG@5 from 0.3841 to 0.3847 while family NDCG@5 decreased from 0.4063 to 0.4040. Together this narrowed the gap from 0.0222 to 0.0193, a reduction of about 13 percent, with only a very small global NDCG@5 decrease from 0.3895 to 0.3894. The remaining gap is partly intrinsic: family queries are easier to rank because a clear destination and party-size constraints narrow the set of relevant hotels. Closing it further would need a more targeted method such as group-specific calibration or adversarial debiasing.
 
 \section{What We Learned}
 \label{sec:learned}
@@ -238,7 +240,7 @@ Main challenges were data scale, missingness, and balancing relevance optimizati
 \section{Conclusion}
 \label{sec:conclusion}
 
-We developed and evaluated two ranking approaches for hotel recommendation: a recommender-style popularity baseline and a LightGBM LambdaMART model with engineered contextual features. The unmitigated LambdaMART model achieved the best local NDCG@5, while reweighting reduced group disparity with a very small global performance cost. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with the assignment's performance and ethical AI requirements.
+We developed and evaluated two ranking approaches for hotel recommendation, a recommender-style popularity baseline at a local validation NDCG@5 of 0.2417 and a LightGBM LambdaMART model with engineered contextual features at a local validation NDCG@5 of 0.3895. The LambdaMART model benefits from a dedicated ranking objective, price cleaning, unbiased target-encoded popularity priors, within-query relative features, and destination-level collaborative signals. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with both performance and ethical AI requirements of the assignment.
 
 %
 % ---- Bibliography ----
