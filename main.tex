@@ -21,8 +21,7 @@
 \author{Nicholas Boidi \and Pablos Tselioudis Garmendia \and Filippo Donghi}
 
 \institute{Vrije Universiteit Amsterdam, Amsterdam, Netherlands \\
-Group Number: 65 \\
-Student Numbers: 2892127, 2891511, 2888236}
+Group Number: 65}
 
 \maketitle
 
@@ -57,7 +56,7 @@ We used the provided competition data only. We loaded the full training set of 4
 
 \begin{table}[t]
 \centering
-\caption{Training/validation statistics from our reproducible run.}
+\caption{Training/validation statistics from the historical coursework run.}
 \label{tab:splitstats}
 \begin{tabular}{lr}
 \toprule
@@ -109,7 +108,7 @@ Following the competition definition, we used graded relevance:
 This keeps booked items as the highest-signal outcomes while still rewarding clicks.
 
 \subsection{Train/Validation Strategy}
-To avoid leakage, we split by \texttt{srch\_id} (query-level split), not by row. This prevents rows from the same search appearing in both train and validation.
+To avoid direct query overlap, we split by \texttt{srch\_id} (query-level split), not by row. This prevents rows from the same search appearing in both train and validation. The split is random rather than temporal, however, and does not address future-data drift. The historical implementation also builds target encodings on a training fold and applies them back to its training rows; a stronger follow-up should use out-of-fold encodings.
 
 \subsection{Feature Engineering}
 We engineered six groups of features:
@@ -168,7 +167,7 @@ LightGBM LambdaMART (bias-mitigated) & 0.3894 \\
 \end{tabular}
 \end{table}
 
-The LambdaMART model improves over the recommender baseline by 0.1478 absolute NDCG@5 (+61\%), confirming that a dedicated ranking objective with query-relative and unbiased target-encoded features provides substantial additional signal over popularity alone. Figure~\ref{fig:importance} shows the top-20 features by LightGBM gain importance.
+The LambdaMART model improves over the recommender baseline by 0.1478 absolute NDCG@5 (+61\%) on this local split. This historical comparison suggests that a dedicated ranking objective with query-relative and random-sort-derived popularity features provides additional signal over the baseline, but it should not be read as a leakage-free or temporal evaluation. Figure~\ref{fig:importance} shows the top-20 features by LightGBM gain importance.
 
 \begin{figure}[t]
 \centering
@@ -211,10 +210,10 @@ Using NDCG@5 by group as the fairness metric:
 \item Before mitigation: family 0.4063, non-family 0.3841, gap 0.0222.
 \end{itemize}
 
-Family queries score higher on average, likely because families search more specifically (clearer destination and party-size constraints narrow the relevant set). A positive gap still represents unequal treatment across user segments.
+Family queries score higher on this split. Query specificity and label distribution are possible explanations, but the experiment does not establish a cause. The observed gap is an exploratory performance diagnostic rather than proof of unequal treatment.
 
 \subsection{Bias Mitigation and Effectiveness}
-We applied a \textbf{pre-processing reweighting} technique. During model training, rows from family queries received weight 1.6 while other rows kept weight 1.0. This tests whether giving the smaller query segment more influence can reduce group-level ranking disparity.
+We applied an exploratory \textbf{pre-processing reweighting} technique. During model training, rows from family queries received weight 1.6 while other rows kept weight 1.0. The value was a coursework choice and was not selected on a separate tuning split.
 
 After mitigation:
 \begin{itemize}
@@ -223,7 +222,7 @@ After mitigation:
 \item Gap: 0.0193
 \end{itemize}
 
-The mitigation raised non-family NDCG@5 from 0.3841 to 0.3847 while family NDCG@5 decreased from 0.4063 to 0.4040. Together this narrowed the gap from 0.0222 to 0.0193, a reduction of about 13 percent, with only a very small global NDCG@5 decrease from 0.3895 to 0.3894. The remaining gap is partly intrinsic: family queries are easier to rank because a clear destination and party-size constraints narrow the set of relevant hotels. Closing it further would need a more targeted method such as group-specific calibration or adversarial debiasing.
+The weighted run raised non-family NDCG@5 from 0.3841 to 0.3847 while family NDCG@5 decreased from 0.4063 to 0.4040. Together this narrowed the observed gap from 0.0222 to 0.0193, about 13 percent, with a small global NDCG@5 decrease from 0.3895 to 0.3894. We did not estimate confidence intervals, test the weight on an independent holdout, or establish that family status is a protected or causal factor. The result should therefore be treated as an exploratory subgroup experiment, not evidence that fairness was achieved.
 
 \section{What We Learned}
 \label{sec:learned}
@@ -240,7 +239,7 @@ Main challenges were data scale, missingness, and balancing relevance optimizati
 \section{Conclusion}
 \label{sec:conclusion}
 
-We developed and evaluated two ranking approaches for hotel recommendation, a recommender-style popularity baseline at a local validation NDCG@5 of 0.2417 and a LightGBM LambdaMART model with engineered contextual features at a local validation NDCG@5 of 0.3895. The LambdaMART model benefits from a dedicated ranking objective, price cleaning, unbiased target-encoded popularity priors, within-query relative features, and destination-level collaborative signals. The resulting pipeline is reproducible, scalable to production-style ranking, and aligned with both performance and ethical AI requirements of the assignment.
+We developed and evaluated two ranking approaches for hotel recommendation, a recommender-style popularity baseline at a local validation NDCG@5 of 0.2417 and a LightGBM LambdaMART model with engineered contextual features at a local validation NDCG@5 of 0.3895. The historical result combines a dedicated ranking objective, price cleaning, target-encoded popularity priors, within-query relative features, and destination-level collaborative signals. Reproducing it requires the restricted course data, and stronger follow-up work should add out-of-fold target encoding, temporal validation, and statistically grounded subgroup evaluation before making production or fairness claims.
 
 %
 % ---- Bibliography ----

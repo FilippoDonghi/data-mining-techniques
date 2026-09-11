@@ -14,7 +14,7 @@
     "best_iter_unmit": 284,
     "best_iter_mit": 317
   },
-  "fairness": {
+  "exploratory_fairness": {
     "group_definition": "family if srch_children_count > 0 else non_family",
     "family_share": 0.24455066443104181,
     "ndcg5_family_before": 0.40634034973104743,
@@ -23,5 +23,11 @@
     "ndcg5_family_after": 0.4040053839657585,
     "ndcg5_non_family_after": 0.3846592271475299,
     "gap_after": 0.0193461568182286
-  }
+  },
+  "methodology_limitations": [
+    "Historical target maps were applied to some of the same training rows used to build them; a follow-up should use out-of-fold target encoding.",
+    "Validation was random by search rather than temporal and does not measure future-data drift.",
+    "The family weight was not selected on a separate tuning split, and subgroup uncertainty was not estimated.",
+    "The historical NDCG implementation skipped searches with zero ideal DCG."
+  ]
 }

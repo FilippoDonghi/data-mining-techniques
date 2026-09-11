@@ -1,6 +1,35 @@
-.claude
-.vscode
-.venv
+# Local tools and Python environments
+.claude/
+.vscode/
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# Restricted competition data and generated submissions
+training_set_VU_DM.csv
+test_set_VU_DM.csv
+train.csv
+test.csv
+submission*.csv
+artifacts/
+
+# Removed course/template artifacts should not be re-added
+assignment_2.pdf
+Guidelines/
+main.pdf
+process_report.pdf
+
+# LaTeX build products
 *.aux
 *.bbl
 *.blg
@@ -14,11 +43,7 @@
 *.snm
 *.synctex.gz
 *.toc
-assignment1_report.log
-assignment1_report.fls
-assignment1_report.aux
-assignment1_report.synctex.gz
-assignment1_report.fdb_latexmk
-submission_sample.csv
-test_set_VU_DM.csv
-training_set_VU_DM.csv
+
+# Operating-system files
+.DS_Store
+Thumbs.db
