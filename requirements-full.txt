@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Full historical coursework pipeline only.
+lightgbm==4.7.0
+matplotlib==3.11.1
