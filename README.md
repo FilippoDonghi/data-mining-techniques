@@ -25,7 +25,7 @@ impressions. The group:
 - compared a smoothed popularity baseline with LambdaMART;
 - engineered query-relative price, quality, competitor, history, and destination features;
 - split whole searches between training and validation;
-- measured NDCG@5; and
+- measured NDCG@5;
 - performed an exploratory family/non-family subgroup analysis.
 
 Historical local validation results preserved from the submitted coursework are:
@@ -156,6 +156,6 @@ claim that the coursework methodology has been repaired.
 
 | Contributor | Role recorded in the submitted process report |
 | --- | --- |
-| Nicholas Boidi | Implemented the data pipeline, feature engineering, LightGBM model training, validation split, fairness analysis, and local ranking-file generation |
+| Filippo Donghi | Worked on Exploratory analysis, feature engineering, LightGBM model training, generated and reviewed plots and metrics, and contributed to final editing and presentation |
+| Nicholas Boidi | Implemented the data pipeline, LightGBM model training, validation split, fairness analysis, and local ranking-file generation |
 | Pablos Tselioudis Garmendia | Led report structure, related work, result interpretation, and scalable-deployment discussion |
-| Filippo Donghi | Helped with exploratory analysis, reviewed plots and metrics, and contributed to final editing and presentation |
